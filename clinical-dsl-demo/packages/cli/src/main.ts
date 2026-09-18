@@ -1,5 +1,5 @@
 import type { Model } from 'clinical-dsl-language';
-import { createClinicalDslServices, ClinicalDslLanguageMetaData } from 'clinical-dsl-language';
+import { createClinicalDslServices, ClinicalDSLDemoLanguageMetaData } from 'clinical-dsl-language';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { extractAstNode } from './util.js';
@@ -29,7 +29,7 @@ export default function(): void {
 
     program.version(JSON.parse(packageContent).version);
 
-    const fileExtensions = ClinicalDslLanguageMetaData.fileExtensions.join(', ');
+    const fileExtensions = ClinicalDSLDemoLanguageMetaData.fileExtensions.join(', ');
     program
         .command('generate')
         .argument('<file>', `source file (possible file extensions: ${fileExtensions})`)

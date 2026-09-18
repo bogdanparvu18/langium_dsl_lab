@@ -1,6 +1,9 @@
 import { type Module, inject } from 'langium';
 import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices } from 'langium/lsp';
-import { ClinicalDslGeneratedModule, ClinicalDslGeneratedSharedModule } from './generated/module.js';
+import {
+    ClinicalDSLDemoGeneratedModule,
+    ClinicalDslGeneratedSharedModule
+} from './generated/module.js';
 import { ClinicalDslValidator, registerValidationChecks } from './clinical-dsl-validator.js';
 
 /**
@@ -54,7 +57,7 @@ export function createClinicalDslServices(context: DefaultSharedModuleContext): 
     );
     const ClinicalDsl = inject(
         createDefaultModule({ shared }),
-        ClinicalDslGeneratedModule,
+        ClinicalDSLDemoGeneratedModule,
         ClinicalDslModule
     );
     shared.ServiceRegistry.register(ClinicalDsl);

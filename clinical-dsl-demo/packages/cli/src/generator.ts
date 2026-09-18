@@ -1,22 +1,51 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Model } from 'clinical-dsl-language';
-import { expandToNode, joinToNode, toString } from 'langium/generate';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { extractDestinationAndName } from './util.js';
 
-export function generateJavaScript(model: Model, filePath: string, destination: string | undefined): string {
+function extractDestinationAndName(
+    filePath: string,
+    destination: string | undefined
+): { destination: string; name: string } {
+    const fileName = path.basename(filePath);
+    return {
+        destination: destination ?? path.dirname(filePath),
+        name: path.basename(fileName, path.extname(fileName))
+    };
+}
+
+export function generateJavaScript(
+    model: Model,
+    filePath: string,
+    destination: string | undefined
+): string {
+
     const data = extractDestinationAndName(filePath, destination);
-    const generatedFilePath = `${path.join(data.destination, data.name)}.js`;
+    const generatedFilePath =
+        `${path.join(data.destination, data.name)}.js`;
 
-    const fileNode = expandToNode`
-        "use strict";
+    const lines: string[] = [
+        '"use strict";'
+    ];
 
-        ${joinToNode(model.greetings, greeting => `console.log('Hello, ${greeting.person.ref?.name}!');`, { appendNewLineIfNotEmpty: true })}
-    `.appendNewLineIfNotEmpty();
+    for (const plan of model.plan) {
+        const patientName =
+            plan.patient.ref?.name ?? 'UnknownPatient';
+
+        lines.push(
+            `console.log("Plan ${plan.name} for ${patientName}");`
+        );
+    }
 
     if (!fs.existsSync(data.destination)) {
-        fs.mkdirSync(data.destination, { recursive: true });
+        fs.mkdirSync(data.destination, {
+            recursive: true
+        });
     }
-    fs.writeFileSync(generatedFilePath, toString(fileNode));
+
+    fs.writeFileSync(
+        generatedFilePath,
+        lines.join('\n')
+    );
+
     return generatedFilePath;
 }

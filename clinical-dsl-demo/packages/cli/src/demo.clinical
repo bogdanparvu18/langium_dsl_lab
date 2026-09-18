@@ -1,0 +1,15 @@
+patient John {
+    age 45
+    condition Diabetes
+}
+
+medication Metformin {
+    dose 500 mg
+}
+
+plan DiabetesPlan {
+    for John
+    prescribe Metformin
+}
+
+show DiabetesPlan
