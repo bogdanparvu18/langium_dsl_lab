@@ -1,0 +1,16 @@
+{
+    "projectName": "ClinicalDsl",
+    "languages": [
+        {
+            "id": "clinical-dsl",
+            "grammar": "src/clinical-dsl.langium",
+            "fileExtensions": [
+                ".clinical"
+            ],
+            "textMate": {
+                "out": "syntaxes/clinical-dsl.tmLanguage.json"
+            }
+        }
+    ],
+    "out": "src/generated"
+}

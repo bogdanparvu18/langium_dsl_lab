@@ -1,0 +1,28 @@
+{
+    "name": "clinical-dsl-cli",
+    "description": "The cli specific package",
+    "version": "0.0.1",
+    "type": "module",
+    "engines": {
+        "node": ">=20.10.0",
+        "npm": ">=10.2.3"
+    },
+    "files": [
+        "bin",
+        "out",
+        "src"
+    ],
+    "bin": {
+        "clinical-dsl-cli": "./bin/cli.js"
+    },
+    "scripts": {
+        "clean": "shx rm -fr *.tsbuildinfo out",
+        "build": "echo 'No build step'",
+        "build:clean": "npm run clean && npm run build"
+    },
+    "dependencies": {
+        "clinical-dsl-language": "0.0.1",
+        "chalk": "~5.6.2",
+        "commander": "~15.0.0"
+    }
+}
