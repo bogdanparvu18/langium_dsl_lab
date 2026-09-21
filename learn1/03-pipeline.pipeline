@@ -1,0 +1,3 @@
+dataset images from "frames.csv"
+model baseline type classifier
+train baseline on images epochs 5

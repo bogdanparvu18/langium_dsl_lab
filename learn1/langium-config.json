@@ -1,0 +1,9 @@
+{
+  "projectName": "MiniClinic",
+  "languages": [{
+    "id": "mini-clinic",
+    "grammar": "02-relations.langium",
+    "fileExtensions": [".clinic"]
+  }],
+  "out": "generated"
+}

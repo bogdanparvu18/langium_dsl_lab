@@ -1,0 +1,14 @@
+{
+  "name": "langium-learning-ro",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.12.0", "npm": ">=10.2.3"},
+  "scripts": {
+    "generate": "langium generate",
+    "inspect": "node inspect.mjs",
+    "test": "node verify-examples.mjs"
+  },
+  "dependencies": {"langium": "4.4.0"},
+  "devDependencies": {"langium-cli": "4.4.0"}
+}
