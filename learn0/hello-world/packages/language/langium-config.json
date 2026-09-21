@@ -1,0 +1,16 @@
+{
+    "projectName": "HelloWorld",
+    "languages": [
+        {
+            "id": "hello-world",
+            "grammar": "src/hello-world.langium",
+            "fileExtensions": [
+                ".hello"
+            ],
+            "textMate": {
+                "out": "syntaxes/hello-world.tmLanguage.json"
+            }
+        }
+    ],
+    "out": "src/generated"
+}
