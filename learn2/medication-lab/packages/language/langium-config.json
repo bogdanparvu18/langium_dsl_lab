@@ -1,0 +1,16 @@
+{
+    "projectName": "Medication",
+    "languages": [
+        {
+            "id": "medication",
+            "grammar": "src/medication.langium",
+            "fileExtensions": [
+                ".med"
+            ],
+            "textMate": {
+                "out": "syntaxes/medication.tmLanguage.json"
+            }
+        }
+    ],
+    "out": "src/generated"
+}
