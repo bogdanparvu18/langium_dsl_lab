@@ -1,0 +1,4 @@
+// Medicamente fictive; doar demonstratie de sintaxa DSL.
+medication DemoMedA dose 10 mg tablet via PO every BID;
+medication DemoMedB dose 2.5 ml liquid via PO every Q6H;
+medication DemoMedC dose 1 unit injection via SC every PRN;
