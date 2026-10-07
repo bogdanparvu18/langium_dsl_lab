@@ -1,0 +1,5 @@
+patient Andrei { age 45 condition Fever }
+medication aspirin{ 2.5 mg route IM frequency Q4H}
+plan FeverPlan { for Andrei prescribe aspirin}
+show FeverPlan
+// typed text

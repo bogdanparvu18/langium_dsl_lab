@@ -5,6 +5,9 @@ import {
     ClinicalDslGeneratedSharedModule
 } from './generated/module.js';
 import { ClinicalDslValidator, registerValidationChecks } from './clinical-dsl-validator.js';
+import {
+    ClinicalDslCompletionProvider
+} from './clinical-dsl-completion-provider.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -26,11 +29,19 @@ export type ClinicalDslServices = LangiumServices & ClinicalDslAddedServices
  * declared custom services. The Langium defaults can be partially specified to override only
  * selected services, while the custom services must be fully specified.
  */
-export const ClinicalDslModule: Module<ClinicalDslServices, PartialLangiumServices & ClinicalDslAddedServices> = {
-    validation: {
-        ClinicalDslValidator: () => new ClinicalDslValidator()
-    }
-};
+export const ClinicalDslModule:
+    Module<
+        ClinicalDslServices,
+        PartialLangiumServices & ClinicalDslAddedServices
+    > = {
+        lsp: {
+            CompletionProvider: services =>
+                new ClinicalDslCompletionProvider(services)
+        },
+        validation: {
+            ClinicalDslValidator: () => new ClinicalDslValidator()
+        }
+    };
 
 /**
  * Create the full set of services required by Langium.
