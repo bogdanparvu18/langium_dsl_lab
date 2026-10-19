@@ -39,6 +39,10 @@
             {
                 "command": "clinical-dsl.rxnorm.setPassword",
                 "title": "Clinical DSL: Set RxNorm PostgreSQL Password"
+            },
+            {
+                "command": "clinical-dsl.contextHelp",
+                "title": "Clinical DSL: Context Help (?)"
             }
         ],
         "configuration": {
@@ -103,7 +107,14 @@
                     "description": "Timeout for each AST export or Scala invocation."
                 }
             }
-        }
+        },
+        "keybindings": [
+            {
+                "command": "clinical-dsl.contextHelp",
+                "key": "shift+/",
+                "when": "editorTextFocus && editorLangId == clinical-dsl && !editorReadonly"
+            }
+        ]
     },
     "activationEvents": [
         "onLanguage:clinical-dsl"
