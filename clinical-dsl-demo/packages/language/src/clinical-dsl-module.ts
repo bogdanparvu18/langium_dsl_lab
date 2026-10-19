@@ -1,4 +1,5 @@
 import { type Module, inject } from 'langium';
+import { ClinicalDslValueConverter } from './clinical-dsl-value-converter.js';
 import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices } from 'langium/lsp';
 import {
     ClinicalDSLDemoGeneratedModule,
@@ -34,6 +35,7 @@ export const ClinicalDslModule:
         ClinicalDslServices,
         PartialLangiumServices & ClinicalDslAddedServices
     > = {
+        parser: { ValueConverter: () => new ClinicalDslValueConverter() },
         lsp: {
             CompletionProvider: services =>
                 new ClinicalDslCompletionProvider(services)
