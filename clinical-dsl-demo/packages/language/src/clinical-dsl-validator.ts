@@ -9,7 +9,7 @@ export function registerValidationChecks(services: ClinicalDslServices): void {
     const validator = services.validation.ClinicalDslValidator;
     const checks: ValidationChecks<ClinicalDslAstType> = {
         Patient: validator.checkPatientStartsWithCapital,
-        Medication: [validator.checkMedicationAmountFromList, validator.checkProductQualifiers]
+        Medication: [validator.checkMedicationAmount, validator.checkProductQualifiers]
     };
     services.validation.ValidationRegistry.register(checks, validator);
 }
