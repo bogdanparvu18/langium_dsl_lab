@@ -1,66 +1,46 @@
-import { beforeAll, describe, expect, test } from "vitest";
-import { EmptyFileSystem, type LangiumDocument } from "langium";
-import { expandToString as s } from "langium/generate";
-import { parseHelper } from "langium/test";
-import type { Diagnostic } from "vscode-languageserver-types";
-import type { Model } from "clinical-dsl-language";
-import { createClinicalDslServices, isModel } from "clinical-dsl-language";
+import { describe, expect, test } from 'vitest';
+import { EmptyFileSystem } from 'langium';
+import { parseHelper } from 'langium/test';
+import { createClinicalDslServices } from '../src/clinical-dsl-module.js';
+import type { Model } from '../src/generated/ast.js';
 
-let services: ReturnType<typeof createClinicalDslServices>;
-let parse:    ReturnType<typeof parseHelper<Model>>;
-let document: LangiumDocument<Model> | undefined;
+const services = createClinicalDslServices(EmptyFileSystem);
+const parse = parseHelper<Model>(services.ClinicalDsl);
+const fixture = `Patient DemoPatient: age 30, condition DemoCondition
+Medication aspirin: 15 mg, strength 325 mg, doseForm Oral Tablet, route PO, frequency PRN
+Plan DemoPlan: for DemoPatient, prescribe aspirin
+show DemoPlan`;
+async function read(text: string) { return parse(text, { validation: true }); }
+function errors(d: Awaited<ReturnType<typeof read>>) { return d.diagnostics?.filter(x => x.severity === 1) ?? []; }
 
-beforeAll(async () => {
-    services = createClinicalDslServices(EmptyFileSystem);
-    const doParse = parseHelper<Model>(services.ClinicalDsl);
-    parse = (input: string) => doParse(input, { validation: true });
-
-    // activate the following if your linking test requires elements from a built-in library, for example
-    // await services.shared.workspace.WorkspaceManager.initializeWorkspace([]);
-});
-
-describe('Validating', () => {
-
-    test('check no errors', async () => {
-        document = await parse(`
-            person Langium
-        `);
-
-        expect(
-            // here we first check for validity of the parsed document object by means of the reusable function
-            //  'checkDocumentValid()' to sort out (critical) typos first,
-            // and then evaluate the diagnostics by converting them into human readable strings;
-            // note that 'toHaveLength()' works for arrays and strings alike ;-)
-            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
-        ).toHaveLength(0);
+describe('Colon DSL', () => {
+    test('links declarations and preserves unquoted attributes', async () => {
+        const d = await read(fixture);
+        expect(d.parseResult.lexerErrors).toHaveLength(0);
+        expect(d.parseResult.parserErrors).toHaveLength(0);
+        expect(errors(d)).toHaveLength(0);
+        const m = d.parseResult.value.medication[0];
+        expect(m.amount).toBe(15);
+        expect(m.productStrength).toBe('325 mg');
+        expect(m.doseForm).toBe('Oral Tablet');
+        expect(d.parseResult.value.plan[0].medication.ref).toBe(m);
     });
-
-    test('check capital letter validation', async () => {
-        document = await parse(`
-            person langium
-        `);
-
-        expect(
-            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
-        ).toEqual(
-            // 'expect.stringContaining()' makes our test robust against future additions of further validation rules
-            expect.stringContaining(s`
-                [1:19..1:26]: Person name should start with a capital.
-            `)
-        );
+    test('accepts concentrations and multiple declarations', async () => {
+        const d = await read(fixture.replace('325 mg', '160 mg/5 ml') + '\nMedication second: 2.5 ml, route PO, frequency QD');
+        expect(errors(d)).toHaveLength(0);
+        expect(d.parseResult.value.medication).toHaveLength(2);
+        expect(d.parseResult.value.medication[0].productStrength).toBe('160 mg/5 ml');
+    });
+    test('retains legacy syntax', async () => {
+        expect(errors(await read('medication aspirin { 15 mg strength "325 mg" doseForm "Oral Tablet" route PO frequency PRN }'))).toHaveLength(0);
+    });
+    test('rejects missing fields, dangling qualifiers and zero dose', async () => {
+        for (const text of [fixture.replace(', route PO', ''), fixture.replace(', doseForm Oral Tablet', ''), fixture.replace('15 mg', '0 mg'), fixture.replace('325 mg', '0 mg')]) {
+            expect(errors(await read(text)).length).toBeGreaterThan(0);
+        }
+    });
+    test('question marks are not part of the persisted language', async () => {
+        const d = await read(fixture.replace('15 mg', '?'));
+        expect(d.parseResult.lexerErrors.length + d.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 });
-
-function checkDocumentValid(document: LangiumDocument): string | undefined {
-    return document.parseResult.parserErrors.length && s`
-        Parser errors:
-          ${document.parseResult.parserErrors.map(e => e.message).join('\n  ')}
-    `
-        || document.parseResult.value === undefined && `ParseResult is 'undefined'.`
-        || !isModel(document.parseResult.value) && `Root AST object is a ${document.parseResult.value.$type}, expected a 'Model'.`
-        || undefined;
-}
-
-function diagnosticToString(d: Diagnostic) {
-    return `[${d.range.start.line}:${d.range.start.character}..${d.range.end.line}:${d.range.end.character}]: ${d.message}`;
-}
