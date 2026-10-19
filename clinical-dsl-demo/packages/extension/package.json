@@ -11,17 +11,99 @@
         "Programming Languages"
     ],
     "contributes": {
-        "languages": [{
-            "id": "clinical-dsl",
-            "aliases": ["Clinical DSL", "clinical-dsl"],
-            "extensions": [".clinical"],
-            "configuration": "./language-configuration.json"
-        }],
-        "grammars": [{
-            "language": "clinical-dsl",
-            "scopeName": "source.clinical-dsl",
-            "path": "syntaxes/clinical-dsl.tmLanguage.json"
-        }]
+        "languages": [
+            {
+                "id": "clinical-dsl",
+                "aliases": [
+                    "Clinical DSL",
+                    "clinical-dsl"
+                ],
+                "extensions": [
+                    ".clinical"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "clinical-dsl",
+                "scopeName": "source.clinical-dsl",
+                "path": "syntaxes/clinical-dsl.tmLanguage.json"
+            }
+        ],
+        "commands": [
+            {
+                "command": "clinical-dsl.rxnorm.resolve",
+                "title": "Clinical DSL: Resolve Medications with RxNorm"
+            },
+            {
+                "command": "clinical-dsl.rxnorm.setPassword",
+                "title": "Clinical DSL: Set RxNorm PostgreSQL Password"
+            }
+        ],
+        "configuration": {
+            "title": "Clinical DSL RxNorm",
+            "properties": {
+                "clinicalDsl.rxnorm.scalaRoot": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "machine",
+                    "description": "Absolute path to scala-testing-lab, containing build.sbt and bridge/export-ast.mjs."
+                },
+                "clinicalDsl.rxnorm.toolsRoot": {
+                    "type": "string",
+                    "default": "",
+                    "scope": "machine",
+                    "description": "Directory containing layout.json. Empty uses USERPROFILE/AuroraLab/tools."
+                },
+                "clinicalDsl.rxnorm.release": {
+                    "type": "string",
+                    "default": "2026-10-05",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "description": "Exact RxNorm release already imported into the local PostgreSQL database."
+                },
+                "clinicalDsl.rxnorm.onSave": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Resolve medications from shown plans when a .clinical file is saved."
+                },
+                "clinicalDsl.rxnorm.pgHost": {
+                    "type": "string",
+                    "enum": [
+                        "127.0.0.1",
+                        "localhost",
+                        "::1"
+                    ],
+                    "default": "127.0.0.1",
+                    "scope": "machine",
+                    "description": "Local PostgreSQL host."
+                },
+                "clinicalDsl.rxnorm.pgPort": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "default": 5432,
+                    "scope": "machine"
+                },
+                "clinicalDsl.rxnorm.pgDatabase": {
+                    "type": "string",
+                    "default": "scala_testing_lab",
+                    "scope": "machine"
+                },
+                "clinicalDsl.rxnorm.pgUser": {
+                    "type": "string",
+                    "default": "scala_lab",
+                    "scope": "machine"
+                },
+                "clinicalDsl.rxnorm.timeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 10,
+                    "maximum": 1800,
+                    "default": 300,
+                    "description": "Timeout for each AST export or Scala invocation."
+                }
+            }
+        }
     },
     "activationEvents": [
         "onLanguage:clinical-dsl"
@@ -46,6 +128,12 @@
         "esbuild": "0.28.2"
     },
     "vsce": {
-      "dependencies": false
+        "dependencies": false
+    },
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": false,
+            "description": "Runs the local Langium exporter and Scala project."
+        }
     }
 }

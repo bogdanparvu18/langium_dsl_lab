@@ -45,6 +45,8 @@ function projectPlan(statement: DisplayPlan) {
         medication: {
             name: medication.name,
             dose: { amount, unit: medication.unit },
+            ...(medication.productStrength !== undefined ? { productStrength: medication.productStrength } : {}),
+            ...(medication.doseForm !== undefined ? { doseForm: medication.doseForm } : {}),
             // Compatible with both the original grammar and the route/frequency patch.
             ...('route' in medication && typeof medication.route === 'string'
                 ? { route: medication.route } : {}),

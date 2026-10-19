@@ -9,12 +9,33 @@ export function registerValidationChecks(services: ClinicalDslServices): void {
     const validator = services.validation.ClinicalDslValidator;
     const checks: ValidationChecks<ClinicalDslAstType> = {
         Patient: validator.checkPatientStartsWithCapital,
-        Medication: validator.checkMedicationAmountFromList
+        Medication: [validator.checkMedicationAmountFromList, validator.checkProductQualifiers]
     };
     services.validation.ValidationRegistry.register(checks, validator);
 }
 
 export class ClinicalDslValidator {
+    checkProductQualifiers(medication: Medication, accept: ValidationAcceptor): void {
+        const strength = medication.productStrength;
+        const form = medication.doseForm;
+        if (strength !== undefined && !/^\s*[0-9]+(?:\.[0-9]+)?\s*(?:mcg|mg|g)(?:\s*\/\s*(?:[0-9]+(?:\.[0-9]+)?\s*)?ml)?\s*$/i.test(strength)) {
+            accept('error', 'Use a product strength such as "325 mg" or "160 mg/5 ml".', { node: medication, property: 'productStrength' });
+        } else if (strength !== undefined) {
+            const numbers = strength.match(/[0-9]+(?:\.[0-9]+)?/g) ?? [];
+            if (numbers.some(value => !Number.isFinite(Number(value)) || Number(value) <= 0)) {
+                accept('error', 'Product strength values must be positive and finite.', { node: medication, property: 'productStrength' });
+            }
+        }
+        if (form !== undefined && !form.trim()) {
+            accept('error', 'Dose form cannot be empty.', { node: medication, property: 'doseForm' });
+        }
+        if ((strength !== undefined) !== (form !== undefined)) {
+            accept('error', 'Specify strength and doseForm together to identify a product.', {
+                node: medication, property: strength !== undefined ? 'productStrength' : 'doseForm'
+            });
+        }
+    }
+
     checkPatientStartsWithCapital(
         patient: Patient,
         accept: ValidationAcceptor

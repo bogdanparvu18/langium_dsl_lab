@@ -17,6 +17,8 @@ Patient:
 Medication:
     'medication' name=ID '{'
         amount=DoseAmount unit=Unit
+        ('strength' productStrength=STRING)?
+        ('doseForm' doseForm=STRING)?
         'route' route=Route
         'frequency' frequency=Frequency
     '}';
@@ -73,4 +75,5 @@ hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 // DECIMAL must precede INT.
 terminal DECIMAL returns number: /[0-9]+\.[0-9]+/;
 terminal INT returns number: /[0-9]+/;
+terminal STRING: /"(\\.|[^"\\])*"|'(\\.|[^'\\])*'/;
 terminal ID: /[_a-zA-Z][\w_]*/;
