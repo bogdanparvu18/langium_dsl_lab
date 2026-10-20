@@ -1,0 +1,17 @@
+patient P9999 {
+  age 30
+  condition Fever
+}
+
+medication inexistent {
+  1 mg
+  route PO
+  frequency PRN
+}
+
+plan DemoPlan {
+  for P9999
+  prescribe inexistent
+}
+
+show DemoPlan

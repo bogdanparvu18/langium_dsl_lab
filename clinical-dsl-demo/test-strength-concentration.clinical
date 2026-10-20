@@ -1,0 +1,18 @@
+patient P9999 {
+  age 30
+  condition Fever
+}
+
+medication aspirin {
+  1 mg
+  strength '100000 mg'
+  doseForm 'Oral Tablet'
+  route PO
+  frequency PRN
+}
+
+plan DemoPlan {
+  for P9999
+  prescribe aspirin
+}
+show DemoPlan

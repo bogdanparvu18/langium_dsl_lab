@@ -1,0 +1,11 @@
+patient P9999 :
+  age 30, condition Fever
+
+
+Medication aspirin : 100 mg, strength 500 mg, doseForm Oral Tablet, route PO, frequency BID
+
+plan DemoPlan :
+  for P9999, 
+  prescribe aspirin
+
+show DemoPlan

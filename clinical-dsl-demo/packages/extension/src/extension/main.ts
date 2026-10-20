@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import { registerRxNorm } from './rxnorm.js';
+import { rxnormPreviewTitle, withRxNormPreview } from './rxnorm-preview.js';
 import { LanguageClient, TransportKind, type ServerOptions } from 'vscode-languageclient/node';
 import {
     GET_SHOW_PLANS,
@@ -8,7 +10,7 @@ import {
     type ShowPlansResponse
 } from '../shared/show-plan-protocol.js';
 
-// The only custom VS Code command in this implementation.
+// Preview JSON command; RxNorm commands are registered separately.
 const PREVIEW = 'clinical-dsl.showJson.preview';
 let client: LanguageClient | undefined;
 
@@ -27,6 +29,7 @@ function toRange(item: ShowPlanItem): vscode.Range {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    const rxnorm = registerRxNorm(context);
     const serverModule = context.asAbsolutePath(path.join('out', 'language', 'main.cjs'));
     const debugOptions = {
         execArgv: ['--nolazy', `--inspect${process.env.DEBUG_BREAK ? '-brk' : ''}=${process.env.DEBUG_SOCKET || '6009'}`]
@@ -43,6 +46,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     let started = false;
     const refresh = new vscode.EventEmitter<void>();
     context.subscriptions.push(refresh);
+    context.subscriptions.push(rxnorm.onDidChange(() => refresh.fire()));
 
     async function query(
         document: vscode.TextDocument,
@@ -119,7 +123,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 if (item.error) {
                     markdown.appendText(item.error);
                 } else if (item.json !== undefined) {
-                    markdown.appendCodeblock(item.json, 'json');
+                    markdown.appendCodeblock(withRxNormPreview(
+                        item.json, rxnorm.getPreview(document, item.planName)
+                    ), 'json');
                 } else {
                     return undefined;
                 }
@@ -145,7 +151,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     // A CodeLens anchor must stay on one line, even if show spans multiple lines.
                     const anchor = new vscode.Range(range.start, range.start);
                     return new vscode.CodeLens(anchor, {
-                        title: 'Preview JSON',
+                        title: rxnormPreviewTitle(rxnorm.getPreview(document, item.planName)),
                         command: PREVIEW,
                         arguments: [target]
                     });
