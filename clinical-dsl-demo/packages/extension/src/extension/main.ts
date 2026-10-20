@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { registerContextHelp } from './context-help.js';
 import * as path from 'node:path';
 import { registerRxNorm } from './rxnorm.js';
 import { rxnormPreviewTitle, withRxNormPreview } from './rxnorm-preview.js';
@@ -29,6 +30,7 @@ function toRange(item: ShowPlanItem): vscode.Range {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    registerContextHelp(context);
     const rxnorm = registerRxNorm(context);
     const serverModule = context.asAbsolutePath(path.join('out', 'language', 'main.cjs'));
     const debugOptions = {

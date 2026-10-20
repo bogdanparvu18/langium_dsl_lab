@@ -9,26 +9,35 @@ entry Model:
     )*;
 
 Patient:
-'patient' name=ID '{'
-        'age' age=INT
-        'condition' condition=ID
-'}';
+    ('patient' | 'Patient') name=ID
+    ('{' 'age' age=INT 'condition' condition=ID '}'
+    | ':' 'age' age=INT ',' 'condition' condition=ID);
 
 Medication:
-    'medication' name=ID '{'
+    ('medication' | 'Medication') name=ID
+    ('{'
         amount=DoseAmount unit=Unit
         ('strength' productStrength=STRING)?
         ('doseForm' doseForm=STRING)?
-        'route' route=Route
-        'frequency' frequency=Frequency
-    '}';
+        'route' route=Route 'frequency' frequency=Frequency
+    '}'
+    | ':' amount=DoseAmount unit=Unit
+        (',' 'strength' productStrength=UnquotedStrength)?
+        (',' 'doseForm' doseForm=UnquotedForm)?
+        ',' 'route' route=Route ',' 'frequency' frequency=Frequency);
+
+UnquotedStrength returns string:
+    (DECIMAL | INT) ('mg' | 'mcg' | 'g')
+    ('/' (DECIMAL | INT)? 'ml')?;
+
+UnquotedForm returns string:
+    ID+;
 
 Plan:
-    'plan' name=ID '{'
-        'for' patient=[Patient]
-        'prescribe' medication=[Medication]
-'}';
-    
+    ('plan' | 'Plan') name=ID
+    ('{' 'for' patient=[Patient] 'prescribe' medication=[Medication] '}'
+    | ':' 'for' patient=[Patient] ',' 'prescribe' medication=[Medication]);
+
 DisplayPlan:
     'show' plan=[Plan:ID];
 
