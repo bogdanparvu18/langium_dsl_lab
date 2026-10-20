@@ -4,11 +4,36 @@ A Langium-based external domain-specific language for declaring patients, medica
 
 > **Scope:** This README describes the `clinical-dsl-demo/` subproject of `langium_dsl_lab`, not the other learning examples in the repository. The clinical example demonstrates software-language concepts; it is not a prescribing tool or a source of medical advice.
 
+### Colon syntax and contextual help
+
+Use `:` after the declaration name and commas between fields. Names remain identifiers; product strength and multiword dose forms do not need quotes in colon syntax.
+
+```text
+Patient DemoPatient: age 30, condition DemoCondition
+Medication aspirin: 15 mg, strength 325 mg, doseForm Oral Tablet, route PO, frequency PRN
+Plan DemoPlan: for DemoPatient, prescribe aspirin
+show DemoPlan
+```
+
+This is a syntax example, not a treatment recommendation. `15 mg` is the administered amount; `325 mg` is the product strength. `route` and `frequency` are required. Supply both `strength` and `doseForm`, or omit both.
+
+In a writable `.clinical` editor:
+
+1. Press **Ctrl+Space** for completion suggestions.
+2. Press **?** for help based on the text before the cursor: declaration name, amount, strength, dose form, route, frequency, patient, plan, or `show`.
+3. Choose **Show suggestions** in the help message to open completion at that position.
+
+The command is **Clinical DSL: Context Help (?)** in the Command Palette. Its default keybinding is **Shift+/**; on other keyboard layouts, rebind that command in Keyboard Shortcuts. The shortcut consumes the key without inserting `?`: it is editor help, not part of the grammar, saved document, or JSON sent to Scala. A question mark pasted into the source is not automatically removed and can cause a syntax error.
+
+Lowercase `patient`, `medication`, and `plan` remain accepted, as do legacy brace declarations. `show` stays lowercase. Completion provides local language suggestions; it does not query RxNorm on every keystroke.
+
+The AST/JSON contract is unchanged. The bridge still exports the plans selected by `show`, preserving source positions. No PostgreSQL reimport is needed for the syntax/help update.
+
 ## Executive summary
 
 Clinical DSL Demo demonstrates how a small, explicitly defined language can turn structured text into a linked model that other software can process. A user writes a `.clinical` document containing patient declarations, medication declarations, plans that reference those declarations, and optional `show` statements that reference plans. Langium uses the grammar to build an abstract syntax tree (AST), resolve named references, and produce diagnostics.
 
-The implementation is divided into three npm workspace packages. The **language package** contains the grammar, service configuration, and a custom patient-name validator. The **extension package** connects the language services to VS Code through a Node.js language client and server. The **CLI package** reads and validates a document, then generates a JavaScript file containing a console message for each defined plan.
+The implementation is divided into three npm workspace packages. The **language package** contains the grammar, service configuration, and custom patient-name, dose-amount, and product-qualifier validators. The **extension package** connects the language services to VS Code through a Node.js language client and server. The **CLI package** reads and validates a document, then generates a JavaScript file containing a console message for each defined plan.
 
 The project's value is the separation of **syntax**, **relationships**, **validation**, and **output generation**. It demonstrates the infrastructure needed to formalize a small domain, rather than a complete clinical application. It does not interpret natural-language notes, recommend treatments, check clinical suitability, or execute prescriptions. Although `show` is part of the grammar, the current generator iterates over every plan and does not use `show` to select output.
 
@@ -19,33 +44,23 @@ Implementation sources: [grammar][grammar], [service module][services], [validat
 | Construct | Information captured | Relationship or behavior |
 | --- | --- | --- |
 | `patient` | A name, age token, and condition identifier | Creates a named `Patient` node. |
-| `medication` | A name, dose amount token, and unit identifier | Creates a named `Medication` node. |
+| `medication` | A name, numeric amount, unit, optional product qualifiers, route, and frequency | Creates a named `Medication` node. |
 | `plan` | A name, one patient reference, and one medication reference | Links an existing patient to an existing medication. |
 | `show` | A reference to a named plan | Creates a `DisplayPlan` node; the generator does not currently consume it. |
 
-A plan records a relationship supplied by the author. It does not establish that the medication is appropriate for the patient. Conditions and units are identifiers, not controlled clinical vocabularies. These boundaries follow directly from the [grammar][grammar] and the single rule in the [custom validator][validator].
+A plan records a relationship supplied by the author. It does not establish that the medication is appropriate for the patient. Conditions are identifiers. Units, routes, and frequencies are grammar-defined choices; product terminology is resolved separately through the Scala/RxNorm integration.
 
 ## 2. Example document and actual generated output
 
-The repository includes this document at [`packages/cli/src/demo.clinical`][demo]:
+An example using the current colon syntax (see also [examples/colon-help.clinical](examples/colon-help.clinical)):
 
 ```text
-patient John {
-    age 45
-    condition Diabetes
-}
-
-medication Metformin {
-    dose 500 mg
-}
-
-plan DiabetesPlan {
-    for John
-    prescribe Metformin
-}
-
+Patient John: age 45, condition Diabetes
+Medication Metformin: 500 mg, route PO, frequency BID
+Plan DiabetesPlan: for John, prescribe Metformin
 show DiabetesPlan
 ```
+
 
 This is an example of the project's syntax, not a treatment recommendation. `John`, `Metformin`, and `DiabetesPlan` are names declared in the document. `for John`, `prescribe Metformin`, and `show DiabetesPlan` refer back to those declarations.
 
@@ -64,7 +79,7 @@ Plan DiabetesPlan for John
 
 This output is derived from the generator's implementation. It is deliberately limited: it includes the plan name and patient name, but not the condition, medication name, or dose.
 
-**`show` is not an execution command in the current implementation.** Removing `show DiabetesPlan` from an otherwise valid document does not remove the console message. The generator loops over `model.plan`, not `model.display`. Conversely, an unresolved `show` reference can still cause a linking diagnostic and prevent the CLI from generating output, because validation happens before generation.
+**The JavaScript CLI does not use `show` to select output.** Removing `show DiabetesPlan` from an otherwise valid document does not remove the console message. The generator loops over `model.plan`, not `model.display`. Conversely, an unresolved `show` reference can still cause a linking diagnostic and prevent the CLI from generating output, because validation happens before generation.
 
 ## 3. How the grammar is written
 
@@ -80,36 +95,87 @@ entry Model:
         patient+=Patient |
         medication+=Medication |
         plan+=Plan |
-        display+=DisplayPlan
+        display+=DisplayPlan 
     )*;
 
 Patient:
-    'patient' name=ID '{'
-        'age' age=INT
-        'condition' condition=ID
-    '}';
+    ('patient' | 'Patient') name=ID
+    ('{' 'age' age=INT 'condition' condition=ID '}'
+    | ':' 'age' age=INT ',' 'condition' condition=ID);
 
 Medication:
-    'medication' name=ID '{'
-        'dose' amount=INT unit=ID
-    '}';
+    ('medication' | 'Medication') name=ID
+    ('{'
+        amount=DoseAmount unit=Unit
+        ('strength' productStrength=STRING)?
+        ('doseForm' doseForm=STRING)?
+        'route' route=Route 'frequency' frequency=Frequency
+    '}'
+    | ':' amount=DoseAmount unit=Unit
+        (',' 'strength' productStrength=UnquotedStrength)?
+        (',' 'doseForm' doseForm=UnquotedForm)?
+        ',' 'route' route=Route ',' 'frequency' frequency=Frequency);
+
+UnquotedStrength returns string:
+    (DECIMAL | INT) ('mg' | 'mcg' | 'g')
+    ('/' (DECIMAL | INT)? 'ml')?;
+
+UnquotedForm returns string:
+    ID+;
 
 Plan:
-    'plan' name=ID '{'
-        'for' patient=[Patient]
-        'prescribe' medication=[Medication]
-    '}';
+    ('plan' | 'Plan') name=ID
+    ('{' 'for' patient=[Patient] 'prescribe' medication=[Medication] '}'
+    | ':' 'for' patient=[Patient] ',' 'prescribe' medication=[Medication]);
 
 DisplayPlan:
     'show' plan=[Plan:ID];
 
+// Keep the quantity numeric.
+// Suggested/allowed quantities are configured separately.
+DoseAmount returns number:
+    DECIMAL | INT;
+
+Unit returns string:
+    'mg'
+    | 'mcg'
+    | 'g'
+    | 'ml'
+    | 'puff'
+    | 'unit';
+
+Route returns string:
+    'PO'
+    | 'IV'
+    | 'IM'
+    | 'SC'
+    | 'PR'
+    | 'SL'
+    | 'BUCC';
+
+Frequency returns string:
+    'QD'
+    | 'BID'
+    | 'TID'
+    | 'QID'
+    | 'PRN'
+    | 'Q4H'
+    | 'Q6H'
+    | 'Q8H'
+    | 'Q12H'
+    | 'Q24H';
+
+
 hidden terminal WS: /\s+/;
 
-terminal ID:
-    /[_a-zA-Z][\w_]*/;
+hidden terminal SL_COMMENT: /\/\/[^\n\r]*/;
+hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 
-terminal INT:
-    /[0-9]+/;
+// DECIMAL must precede INT.
+terminal DECIMAL returns number: /[0-9]+\.[0-9]+/;
+terminal INT returns number: /[0-9]+/;
+terminal STRING: /"(\\.|[^"\\])*"|'(\\.|[^'\\])*'/;
+terminal ID: /[_a-zA-Z][\w_]*/;
 ```
 
 ### Reading the notation
@@ -146,7 +212,7 @@ Top-level statement kinds can be interleaved. Inside each block, however, fields
 
 ### 3.2 Patient declarations
 
-The `Patient` rule requires a name, braces, an `age` field, and then a `condition` field:
+The `Patient` rule requires a name, an `age` field, and then a `condition` field. Use colon/comma syntax or legacy braces:
 
 ```text
 patient Alice {
@@ -161,15 +227,32 @@ Changing the order to `condition ... age ...` does not satisfy the rule. Line br
 
 ### 3.3 Medication declarations
 
-The `Medication` rule requires exactly one dose amount and one unit:
+```text
+Medication DemoMedication: 2.5 mg, strength 10 mg/ml, doseForm Oral Solution, route PO, frequency PRN
+```
+
+Fields have a fixed order: amount and unit, optional strength, optional dose form, required route, required frequency. The validators require a positive finite dose amount and require the two product qualifiers together. Completion examples such as `1`, `2.5`, and `10` are suggestions, not the allowed-dose list.
+
+| Field | Accepted syntax |
+| --- | --- |
+| Amount | Integer or decimal, such as `15` or `2.5`. |
+| Unit | `mg`, `mcg`, `g`, `ml`, `puff`, `unit`. |
+| Unquoted strength | Positive mass in `mg`, `mcg`, or `g`, optionally per `ml`, e.g. `10 mg/ml` or `50 mg/5 ml`. |
+| Unquoted dose form | One or more identifier words, e.g. `Oral Tablet`. |
+| Route | `PO`, `IV`, `IM`, `SC`, `PR`, `SL`, `BUCC`. |
+| Frequency | `QD`, `BID`, `TID`, `QID`, `PRN`, `Q4H`, `Q6H`, `Q8H`, `Q12H`, `Q24H`. |
+
+The [value converter](packages/language/src/clinical-dsl-value-converter.ts) preserves word separation in unquoted values. Legacy syntax is still supported, with quoted product qualifiers and no `dose` keyword:
 
 ```text
 medication DemoMedication {
-    dose 10 mg
+    2.5 mg
+    strength "10 mg/ml"
+    doseForm "Oral Solution"
+    route PO
+    frequency PRN
 }
 ```
-
-The amount must match the digit-only `INT` token. The unit is an `ID`, not an enumeration. As a result, the grammar does not distinguish a recognized unit from an invented identifier. It also has no route, frequency, duration, or decimal-dose production.
 
 ### 3.4 Plans and typed cross-references
 
@@ -201,17 +284,17 @@ show ExamplePlan
 
 creates a `DisplayPlan` whose `plan` property references a `Plan`. `[Plan:ID]` specifies the reference token explicitly.
 
-Defining this statement in the grammar gives it syntax and a model representation. It does **not** implement display behavior. The [generator][generator] currently does not read these nodes, and the [extension manifest][extension-manifest] declares no custom VS Code command that executes `show`.
+The editor uses `show` for plan previews and the Scala bridge uses it to select plans for export and RxNorm resolution. The separate JavaScript [generator][generator] still iterates over all plans.
 
 ### 3.6 Lexical rules and practical syntax limits
 
 `ID` starts with an ASCII letter or underscore, followed by word characters or underscores. Names such as `Alice`, `Plan_1`, and `DemoMedication` fit that pattern; `Alice Smith`, `Plan-1`, and a quoted name do not fit a single `ID`.
 
-`INT` accepts one or more digits. Negative values and decimals are not part of this token. The source does **not** specify `returns number`; its exact definition is retained above. The lexical name `INT` should not be substituted for an explicit type declaration when extending downstream TypeScript code.
+`INT` accepts digits and returns a number; `DECIMAL` accepts digits on both sides of a decimal point and also returns a number. `DoseAmount` accepts either. Negative amounts are not part of the grammar.
 
-The grammar contains no comment terminal and no string-literal terminal. Do not assume that `// comments`, `/* comments */`, or quoted strings are supported in `.clinical` documents. Whitespace is ignored, but comments are not declared as hidden input.
+Line comments (`// ...`), block comments (`/* ... */`), and whitespace are hidden. The `STRING` terminal supports quoted values in legacy brace syntax. Colon syntax uses unquoted strength and dose form rules.
 
-Literal keywords use the spelling shown in the grammar. The semicolons ending grammar rules belong to the `.langium` specification; semicolons are not included as statement terminators in the `.clinical` language.
+Keywords are case-sensitive, with explicit lowercase/title-case alternatives for patient, medication, and plan declarations. Semicolons belong to the grammar specification, not to user documents. Newlines are whitespace, so a declaration can wrap across lines; commas and field order still matter.
 
 ## 4. From text to a linked AST
 
@@ -260,7 +343,7 @@ The [CLI document loader][cli-util] builds the document with validation enabled 
 | Reference resolution | A plan refers to an undeclared patient | A linking diagnostic. |
 | Custom validation | A patient is named `john` | A capitalization warning. |
 
-The only custom rule currently registered is `Patient: checkPatientStartsWithCapital`. It checks whether the first character differs from its uppercase form and reports:
+Registered checks include positive finite medication amounts, paired product qualifiers with supported positive strength syntax, and `Patient: checkPatientStartsWithCapital`. It checks whether the first character differs from its uppercase form and reports:
 
 ```text
 Patient name should start with a capital letter.
@@ -270,7 +353,7 @@ This is a **warning**, not an error. An initial underscore does not trigger that
 
 The CLI filters diagnostics for severity `1` and exits when such errors exist. Its current document loader does not print or reject warnings. Therefore, a capitalization warning alone does not block generation.
 
-No custom checks are implemented for age bounds, dose safety, medication–condition compatibility, controlled units, or duplicate declaration names. Syntactic validity and successful linking must not be interpreted as clinical correctness.
+No clinical checks are implemented for age bounds, dose safety, or medication–condition compatibility. Units are constrained by the grammar; the Scala bridge also rejects duplicate declarations. Syntactic validity and successful linking must not be interpreted as clinical correctness.
 
 ## 6. Project structure
 
@@ -285,10 +368,10 @@ clinical-dsl-demo/
     │   ├── src/
     │   │   ├── clinical-dsl.langium      Language syntax and AST assignments
     │   │   ├── clinical-dsl-module.ts    Default, generated, and custom services
-    │   │   ├── clinical-dsl-validator.ts Patient-name warning
+    │   │   ├── clinical-dsl-validator.ts Patient-name, amount, and qualifier checks
     │   │   ├── index.ts                  Public exports
     │   │   └── generated/                Created by Langium generation
-    │   └── test/                         Includes scaffold-era test content
+    │   └── test/                         Clinical grammar and validation tests
     ├── extension/
     │   ├── package.json                  .clinical registration and extension entry
     │   ├── esbuild.mjs                   Bundles extension and server for Node.js
@@ -304,7 +387,7 @@ clinical-dsl-demo/
             └── demo.clinical             Included example document
 ```
 
-`createClinicalDslServices(...)` combines Langium defaults, generated modules, and `ClinicalDslModule`; registers the language; and registers the patient-name check. Both the CLI and the language server use this service factory. The extension client communicates with its Node.js server using IPC. Sources: [services][services], [CLI entry][cli-main], [client][client], [server][server].
+`createClinicalDslServices(...)` combines Langium defaults, generated modules, and `ClinicalDslModule`; registers the language; and registers the custom validators, completion provider, and value converter. Both the CLI and the language server use this service factory. The extension client communicates with its Node.js server using IPC. Sources: [services][services], [CLI entry][cli-main], [client][client], [server][server].
 
 ## 7. Build and run
 
@@ -320,7 +403,7 @@ From the repository root:
 
 ```bash
 cd clinical-dsl-demo
-npm install
+npm ci
 npm run langium:generate
 npm run build
 ```
@@ -339,11 +422,11 @@ The language and CLI package scripts printing `No build step` do not mean those 
 From `clinical-dsl-demo/`, after a successful build:
 
 ```bash
-node packages/cli/bin/cli.js generate packages/cli/src/demo.clinical -d generated
-node generated/demo.js
+node packages/cli/bin/cli.js generate examples/colon-help.clinical -d generated
+node generated/colon-help.js
 ```
 
-The first command parses, links, and validates the document before writing `generated/demo.js`. The second command executes that generated JavaScript. Without `-d`, the generator writes the output beside the input file, with the same base name and a `.js` extension. It writes to that path directly, replacing existing contents if the file already exists.
+The first command parses, links, and validates the document before writing `generated/colon-help.js`. The second command executes that generated JavaScript. Without `-d`, the generator writes the output beside the input file, with the same base name and a `.js` extension. It writes to that path directly, replacing existing contents if the file already exists.
 
 These commands reflect the [CLI wrapper][cli-wrapper], [command registration][cli-main], [validation gate][cli-util], and [generator][generator].
 
@@ -381,28 +464,29 @@ npm run --workspace packages/extension build:prepare
 
 These processes update files on disk, not JavaScript already loaded into a running host. Reload the development host after successful compilation to test the new implementation. The scripts do not implement automatic runtime hot replacement. Sources: [workspace scripts][workspace-package], [language scripts][language-package], [extension scripts][extension-manifest], and [esbuild][esbuild].
 
-### Tests require migration to the clinical grammar
+### Language and extension tests
 
-The project exposes:
+After regenerating and building, run from `clinical-dsl-demo/`:
 
 ```bash
 npm test
+node --test packages/extension/test/context-help.test.mjs packages/extension/test/rxnorm.test.mjs
 ```
 
-However, the active [`validating.test.ts`][validation-tests] still uses `person Langium` and `person langium`, and expects the old `Person` capitalization message. Those inputs do not match the current `patient ... { age ... condition ... }` grammar. The parsing and linking test files are named `parsing.test.ts.disabled` and `linking.test.ts.disabled`.
+The language suite covers clinical syntax and validation, including colon syntax, unquoted qualifiers, and legacy compatibility. The extension suites cover contextual help and RxNorm process/preview behavior using mocks. These tests do not replace a visual check in Extension Development Host.
 
-**Do not treat the existing test files as verified coverage of the clinical language.** They need clinical fixtures and expectations before the suite can serve that purpose. This README describes source behavior; it does not report a successful test run.
+Open `examples/colon-help.clinical` from the same checkout in the development host. Try Ctrl+Space and `?` at different field positions; confirm that help does not insert a question mark. Reload the host after rebuilding.
+
+For AST export tests, follow the [Scala repository README](https://github.com/bogdanparvu18/scala-testing-lab#12-testing), setting `LANGIUM_ROOT` to this compiled workspace.
 
 ## 9. Current implementation boundaries
 
-The following distinctions are important when extending the demo:
+- The JavaScript CLI prints all plan/patient summaries. The editor and Scala bridge use `show` to select plans.
+- Grammar validation is structural, not a clinical dose-safety check.
+- The extension can resolve terminology through the companion Scala CLI and local PostgreSQL RxNorm database. Resolution runs on save or an explicit command; contextual help and completion are local editor features.
+- The JSON contract retains separate administered dose and product-strength fields. Changing the surface syntax does not change the Scala schema or require importing the terminology database again.
 
-- **`show` is modeled but not used by the generator.** Generated output covers all plans, regardless of display statements.
-- **Clinical data is represented, not clinically evaluated.** Conditions and units remain identifiers; there are no treatment-selection or prescription-safety rules.
-- **Output generation is intentionally small.** It prints plan and patient names only. There is no natural-language interface, clinical database integration, or prescription execution in the inspected implementation.
-- **Some scaffolding text remains outdated.** The CLI's help description still refers to greetings even though its generator now prints plan summaries, and the active validation tests still target the Hello World example.
-
-The source files below are the authority for implementation behavior. The external Langium reference is used only to explain grammar notation, not to attribute additional application features to this project.
+See [COLON-HELP.md](COLON-HELP.md) for the syntax/help change and the [Scala README](https://github.com/bogdanparvu18/scala-testing-lab#10-vs-code-extension-workflow) for resolver configuration.
 
 [grammar]: packages/language/src/clinical-dsl.langium
 [langium-config]: packages/language/langium-config.json
