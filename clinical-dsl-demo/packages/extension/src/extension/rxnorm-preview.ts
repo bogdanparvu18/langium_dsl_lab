@@ -27,9 +27,22 @@ export function withRxNormPreview(json: string, state: RxNormPreviewState): stri
                 rxnorm = { ...metadata, code: 'MEDICATION_UNKNOWN', error: 'medication unknown', concept: null };
             } else if (resolution.status === 'resolved') {
                 rxnorm = { ...metadata, concept: resolution.initialConcept,
+<<<<<<< HEAD
                     ingredients: resolution.ingredients.map(i => i.concept) };
             } else if (resolution.status === 'needsClarification') {
                 rxnorm = { ...metadata, message: 'Medication needs clarification.',
+=======
+                    ingredients: resolution.ingredients.map(i => i.concept),
+                    ...(resolution.selectedProduct ? { selectedProduct: resolution.selectedProduct,
+                        productEvidence: resolution.productEvidence } : {}) };
+            } else if (resolution.status === 'productNotFound') {
+                rxnorm = { ...metadata, code: 'PRODUCT_NOT_FOUND',
+                    error: 'No product matches productStrength and doseForm in this local RxNorm release.',
+                    concept: resolution.initialConcept, selectedProduct: null, diagnostics: resolution.diagnostics };
+            } else if (resolution.status === 'needsClarification') {
+                rxnorm = { ...metadata, message: 'Medication needs clarification.',
+                    diagnostics: resolution.diagnostics,
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
                     candidates: (resolution.candidates ?? []).map(candidate => candidate.concept) };
             } else {
                 rxnorm = { ...metadata, code: 'INVALID_MEDICATION_ROLE', error: 'Medication does not match the required semantic role.' };
@@ -46,5 +59,9 @@ export function rxnormPreviewTitle(state: RxNormPreviewState): string {
     if (state.kind === 'complete' && state.resolution.status === 'unresolved') {
         return 'Preview JSON — medication unknown';
     }
+<<<<<<< HEAD
+=======
+    if (state.kind === 'complete' && state.resolution.status === 'productNotFound') return 'Preview JSON — product not found';
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
     return 'Preview JSON';
 }

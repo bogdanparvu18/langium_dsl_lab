@@ -15,6 +15,11 @@ interface Mention {
     orderId: string;
     originalText: string;
     role: string;
+<<<<<<< HEAD
+=======
+    productStrength?: string;
+    doseForm?: string;
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
     source: { uri: string; start: Position; end: Position; text: string };
 }
 interface Request {
@@ -25,6 +30,11 @@ interface Resolution {
     mention: Mention;
     status: string;
     initialConcept?: Concept | null;
+<<<<<<< HEAD
+=======
+    selectedProduct?: Concept | null;
+    productEvidence?: Record<string, unknown> | null;
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
     ingredients: { concept: Concept }[];
     diagnostics: string[];
     candidates?: { concept: Concept }[];
@@ -88,7 +98,12 @@ function checkReport(text: string, request: Request, release: string): Report {
         if (!expected || JSON.stringify(result.mention.source) !== JSON.stringify(expected.source) ||
             result.mention.originalText !== expected.originalText || result.mention.role !== expected.role ||
             result.mention.orderId !== expected.orderId ||
+<<<<<<< HEAD
             !['resolved', 'unresolved', 'needsClarification', 'invalidRole'].includes(result.status) ||
+=======
+            result.mention.productStrength !== expected.productStrength || result.mention.doseForm !== expected.doseForm ||
+            !['resolved', 'unresolved', 'productNotFound', 'needsClarification', 'invalidRole'].includes(result.status) ||
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
             !Array.isArray(result.ingredients) || !Array.isArray(result.diagnostics)) {
             throw new Error('Scala returned an inconsistent resolution report.');
         }
@@ -222,10 +237,19 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                     output.appendLine(`Snapshot: ${report.snapshotFingerprint}`);
                     output.appendLine('Text\tRole\tStatus\tRxCUI\tName\tType');
                     for (const resolution of report.resolutions) {
+<<<<<<< HEAD
                         const { mention, status, initialConcept: concept } = resolution;
                         const summary = status === 'resolved' && concept
                             ? `${mention.originalText}: RxCUI ${concept.rxcui} | ${concept.display} | ${concept.tty}`
                             : status === 'unresolved' ? `medication unknown: ${mention.originalText}`
+=======
+                        const { mention, status } = resolution;
+                        const concept = resolution.selectedProduct ?? resolution.initialConcept;
+                        const summary = status === 'resolved' && concept
+                            ? `${mention.originalText}: RxCUI ${concept.rxcui} | ${concept.display} | ${concept.tty}`
+                            : status === 'unresolved' ? `medication unknown: ${mention.originalText}`
+                            : status === 'productNotFound' ? `product not found: ${mention.originalText}`
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
                             : `${mention.originalText}: ${status}`;
                         summaries.push(summary);
                         const range = new vscode.Range(mention.source.start.line, mention.source.start.character,
@@ -236,9 +260,16 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                             (resolution.diagnostics.length ? `\n${resolution.diagnostics.join('\n')}` : '');
                         const item = new vscode.Diagnostic(range, message,
                             status === 'resolved' ? vscode.DiagnosticSeverity.Information
+<<<<<<< HEAD
                                 : status === 'unresolved' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
                         item.source = 'RxNorm / Scala';
                         if (status === 'unresolved') item.code = 'MEDICATION_UNKNOWN';
+=======
+                                : ['unresolved', 'productNotFound'].includes(status) ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
+                        item.source = 'RxNorm / Scala';
+                        if (status === 'unresolved') item.code = 'MEDICATION_UNKNOWN';
+                        if (status === 'productNotFound') item.code = 'PRODUCT_NOT_FOUND';
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
                         items.push(item);
                         output.appendLine([mention.originalText, mention.role, status, concept?.rxcui ?? '-',
                             concept?.display ?? '-', concept?.tty ?? '-'].join('\t'));
@@ -249,7 +280,11 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                         (summaries.length > 3 ? '; see Output for all medications' : '');
                     const show = report.resolutions.every(r => r.status === 'resolved')
                         ? vscode.window.showInformationMessage
+<<<<<<< HEAD
                         : report.resolutions.some(r => r.status === 'unresolved')
+=======
+                        : report.resolutions.some(r => ['unresolved', 'productNotFound'].includes(r.status))
+>>>>>>> 9fd1951ae61e93fd876f1fad30f65df74378bd13
                             ? vscode.window.showErrorMessage : vscode.window.showWarningMessage;
                     void show(`RxNorm: ${summary}`, 'Show details').then(choice => {
                         if (choice) output.show(true);
