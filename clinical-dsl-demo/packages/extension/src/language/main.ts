@@ -92,7 +92,8 @@ connection.onRequest(
                 startOffset: document.textDocument.offsetAt(range.start),
                 endOffset: document.textDocument.offsetAt(range.end),
                 sourceText: document.textDocument.getText(range),
-                planName: statement.plan.$refText
+                // RxNorm reports use the declaration's canonical spelling as orderId.
+                planName: statement.plan.ref?.name ?? statement.plan.$refText
             };
             if (errors.length) {
                 item.error = errors.join('\n');
