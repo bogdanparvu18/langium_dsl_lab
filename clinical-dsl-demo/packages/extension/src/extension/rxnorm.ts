@@ -9,7 +9,8 @@ const RESOLVE = 'clinical-dsl.rxnorm.resolve';
 const PASSWORD = 'clinical-dsl.rxnorm.setPassword';
 
 interface Position { line: number; character: number; offset: number }
-interface Concept { rxcui: string; display: string; tty: string }
+interface Concept { rxcui: string; display: string; tty: string; release?: string }
+interface ProductBinding { rxcui: string; release: string }
 interface Mention {
     id: string;
     orderId: string;
@@ -17,6 +18,7 @@ interface Mention {
     role: string;
     productStrength?: string;
     doseForm?: string;
+    productBinding?: ProductBinding;
     source: { uri: string; start: Position; end: Position; text: string };
 }
 interface Request {
@@ -93,6 +95,8 @@ function checkReport(text: string, request: Request, release: string): Report {
             result.mention.originalText !== expected.originalText || result.mention.role !== expected.role ||
             result.mention.orderId !== expected.orderId ||
             result.mention.productStrength !== expected.productStrength || result.mention.doseForm !== expected.doseForm ||
+            result.mention.productBinding?.rxcui !== expected.productBinding?.rxcui ||
+            result.mention.productBinding?.release !== expected.productBinding?.release ||
             !['resolved', 'unresolved', 'productNotFound', 'needsClarification', 'invalidRole'].includes(result.status) ||
             !Array.isArray(result.ingredients) || !Array.isArray(result.diagnostics)) {
             throw new Error('Scala returned an inconsistent resolution report.');
@@ -101,6 +105,13 @@ function checkReport(text: string, request: Request, release: string): Report {
             !/^\d+$/.test(result.initialConcept.rxcui) ||
             typeof result.initialConcept.display !== 'string' || typeof result.initialConcept.tty !== 'string')) {
             throw new Error('A resolved medication has no valid RxNorm concept.');
+        }
+        if (expected.productBinding && result.status === 'resolved' &&
+            (expected.productBinding.release !== release ||
+             result.selectedProduct?.rxcui !== expected.productBinding.rxcui ||
+             result.selectedProduct.release !== expected.productBinding.release ||
+             !['SCD', 'SBD'].includes(result.selectedProduct.tty))) {
+            throw new Error('Scala returned a different product or release from the explicit RxCUI selection.');
         }
         remaining.delete(expected.id);
     }
@@ -213,6 +224,11 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                     if (request.document.text !== originalText ||
                         vscode.Uri.parse(request.document.uri).toString() !== document.uri.toString()) {
                         throw new Error('The source file changed during AST export. Save it and run again.');
+                    }
+                    const conflictingBinding = request.mentions.find(mention =>
+                        mention.productBinding && mention.productBinding.release !== release);
+                    if (conflictingBinding?.productBinding) {
+                        throw new Error(`Selected product ${conflictingBinding.productBinding.rxcui} uses RxNorm ${conflictingBinding.productBinding.release}, but the configured release is ${release}. Select a product from the configured release or change the configuration.`);
                     }
                     await runProcess(java, ['-Xmx2G', '-Dsbt.supershell=false', '-Dsbt.log.noformat=true',
                         '-jar', launcher, `run resolve ${sbtPath(input)} ${sbtPath(result)}`],

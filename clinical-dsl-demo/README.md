@@ -25,9 +25,9 @@ In a writable `.clinical` editor:
 
 The command is **Clinical DSL: Context Help (?)** in the Command Palette. Its default keybinding is **Shift+/**; on other keyboard layouts, rebind that command in Keyboard Shortcuts. The shortcut consumes the key without inserting `?`: it is editor help, not part of the grammar, saved document, or JSON sent to Scala. A question mark pasted into the source is not automatically removed and can cause a syntax error.
 
-Medication and plan keywords and their supported values accept mixed case; units, routes and frequency values are normalized for downstream processing. The patient declaration keeps its existing structure. Completion provides local language suggestions; it does not query RxNorm on every keystroke.
+Medication and plan keywords and their supported values accept mixed case; units, routes and frequency values are normalized for downstream processing. The patient declaration keeps its existing structure. Completion also supports debounced product-prefix search against the local Scala/RxNorm service. Select a product from the suggestion list and press **Tab** to store its explicit RxCUI and release. See [RxNorm product autocomplete](RXNORM-AUTOCOMPLETE.md) for setup, behavior, and the JSON contract.
 
-The JSON contract for valid documents is unchanged. The bridge still exports the plans selected by `show`, preserving source positions. Incomplete medication nodes have optional fields in the generated TypeScript AST; validation blocks preview/export until required fields are supplied. No PostgreSQL reimport is needed for the syntax/help update.
+Existing documents without an explicit product binding retain the original bridge contract. Bound medications add `productBinding: { rxcui, release }`; the matching Scala bridge emits request schema `2` with policy `explicit-product-v1`. The bridge still exports the plans selected by `show`, preserving source positions. Incomplete medication nodes have optional fields in the generated TypeScript AST; validation blocks preview/export until required fields are supplied. The search service creates its prefix index over the existing imported data; no RxNorm reimport is needed.
 
 ## Executive summary
 
@@ -150,8 +150,12 @@ Use only one declaration with a given medication name in a document; names that 
 | Dose form | Unquoted words such as `Oral Tablet` or `Metered Dose Inhaler`; use quotes for values containing other field keywords or ending in `Dose`. |
 | Route | `PO`, `IV`, `IM`, `SC`, `PR`, `SL`, `BUCC`. |
 | Frequency | `QD`, `BID`, `TID`, `QID`, `PRN`, `Q4H`, `Q6H`, `Q8H`, `Q12H`, `Q24H`. |
+| RxCUI | `rxcui "900001"` (syntax-only identifier example); quoted positive digits, at most 20. |
+| RxNorm release | `rxnormRelease "2026-10-05"`; a valid calendar date, supplied together with `rxcui`. |
 
 Supported units are normalized to lowercase, while routes and frequencies are normalized to uppercase before projection. Strengths such as `160MG/5ML` and `160 mg / 5 ml` become `160 mg/5 ml`. Product strength and dose form are distinct from the administered dose. Normalization does not rewrite the user's document.
+
+An explicit product binding makes the Medication name a local alias for the selected product. Plan references continue to use that alias. The selected RxCUI and release are authoritative at terminology validation: an unknown ID, wrong concept type, changed release, or conflicting product qualifiers cannot silently select a different product. Product autocomplete supplies the binding, not an administered dose or frequency. Binding fields are available in the colon syntax.
 
 ### 3.4 Plans and typed cross-references
 

@@ -77,6 +77,7 @@ async function harness(options = {}) {
                     const documentText = await readFile(input, 'utf8');
                     const mention = { id: `DemoPlan:${medicationName}`, orderId: 'DemoPlan', originalText: medicationName, role: 'medication',
                         ...(options.product ? { productStrength: '500 mg', doseForm: 'Oral Tablet' } : {}),
+                        ...(options.binding ? { productBinding: options.binding } : {}),
                         source: { uri: uri.toString(), start: { line: 0, character: 0, offset: 0 },
                             end: { line: 0, character: text.length, offset: text.length }, text } };
                     await writeFile(args[args.indexOf('--output') + 1], JSON.stringify({
@@ -93,9 +94,13 @@ async function harness(options = {}) {
                     const resolved = status === 'resolved';
                     await writeFile(output, JSON.stringify({ schemaVersion: '2', terminologyRelease: options.wrongRelease ? 'other' : '2026-10-05',
                         terminologyScope: 'test-scope', snapshotFingerprint: 'test-fingerprint',
-                        resolutions: [{ mention: request.mentions[0], status,
+                        resolutions: [{ mention: options.reportBinding
+                            ? { ...request.mentions[0], productBinding: options.reportBinding } : request.mentions[0], status,
                             initialConcept: resolved ? { rxcui: '161', display: 'acetaminophen', tty: 'IN' } : null,
-                            ...(options.product && resolved ? { selectedProduct: { rxcui: '900001', display: 'synthetic 500 MG Oral Tablet', tty: 'SCD' },
+                            ...((options.product || options.binding) && resolved && !options.missingSelectedProduct ? { selectedProduct: {
+                                rxcui: options.wrongProductId ? '900002' : options.binding?.rxcui ?? '900001',
+                                display: 'synthetic 500 MG Oral Tablet', tty: options.wrongProductType ? 'IN' : 'SCD',
+                                release: options.wrongProductRelease ? '2026-11-02' : '2026-10-05' },
                                 productEvidence: { strength: { value: '500 MG', atui: 'synthetic-attribute' } } } : {}),
                             ingredients: [], diagnostics: [], candidates: [] }] }));
                 }
@@ -154,7 +159,8 @@ async function harness(options = {}) {
         require: name => name === 'vscode' ? vscode : name === 'node:child_process' ? { spawn } : require(name) });
     const rxnorm = module.exports.registerRxNorm(context);
     const planJson = JSON.stringify({ name: 'DemoPlan', patient: { name: 'DemoPatient' },
-        medication: { name: medicationName, dose: { amount: 1, unit: 'mg' }, route: 'PO', frequency: 'PRN' } });
+        medication: { name: medicationName, dose: { amount: 1, unit: 'mg' }, route: 'PO', frequency: 'PRN',
+            ...(options.binding ? { productBinding: options.binding } : {}) } });
     const token = { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) };
     async function activatePreview() {
         class LanguageClient {
@@ -416,3 +422,50 @@ test('a product-strength failure is displayed separately from medication unknown
     assert.doesNotMatch(result.error, /medication unknown/);
     assert.equal(h.entries.get(h.document.uri.toString())[0].severity, 0);
 });
+
+test('an explicit product binding survives verification and Preview JSON', async t => {
+    const binding = { rxcui: '900001', release: '2026-10-05' };
+    const h = await harness({ medicationName: 'MyProductAlias', binding }); t.after(() => h.cleanup());
+    await h.resolve();
+    const medication = preview(h).medication;
+    assert.deepEqual(medication.productBinding, binding);
+    assert.equal(medication.name, 'MyProductAlias');
+    assert.equal(medication.rxnorm.status, 'resolved');
+    assert.equal(medication.rxnorm.selectedProduct.rxcui, binding.rxcui);
+    assert.equal(medication.rxnorm.selectedProduct.release, binding.release);
+
+    const mismatchedPreview = JSON.parse(h.planJson);
+    mismatchedPreview.medication.productBinding.rxcui = '900002';
+    assert.throws(() => withRxNormPreview(JSON.stringify(mismatchedPreview),
+        h.rxnorm.getPreview(h.document, 'DemoPlan')), /does not belong/);
+});
+
+test('a selected product from another release prevents the Scala resolver from starting', async t => {
+    const h = await harness({ binding: { rxcui: '900001', release: '2026-11-02' } });
+    t.after(() => h.cleanup());
+    await h.resolve();
+    assert.equal(h.processes.length, 1);
+    assert.match(h.notices.at(-1).message, /configured release is 2026-10-05/);
+    assert.equal(h.entries.size, 0);
+    assert.equal(preview(h).medication.rxnorm.status, 'unavailable');
+});
+
+test('a report cannot replace the product binding from the exported request', async t => {
+    const h = await harness({ binding: { rxcui: '900001', release: '2026-10-05' },
+        reportBinding: { rxcui: '900002', release: '2026-10-05' } });
+    t.after(() => h.cleanup());
+    await h.resolve();
+    assert.equal(h.entries.size, 0);
+    assert.match(h.notices.at(-1).message, /inconsistent resolution report/);
+});
+
+for (const option of ['wrongProductId', 'wrongProductRelease', 'wrongProductType', 'missingSelectedProduct']) {
+    test(`a resolved explicit binding rejects ${option}`, async t => {
+        const h = await harness({ binding: { rxcui: '900001', release: '2026-10-05' }, [option]: true });
+        t.after(() => h.cleanup());
+        await h.resolve();
+        assert.equal(h.entries.size, 0);
+        assert.match(h.notices.at(-1).message, /different product or release/);
+        assert.equal(preview(h).medication.rxnorm.status, 'unavailable');
+    });
+}

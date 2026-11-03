@@ -29,6 +29,15 @@ function toRange(item: ShowPlanItem): vscode.Range {
     );
 }
 
+function rxnormSearchConfiguration() {
+    const config = vscode.workspace.getConfiguration('clinicalDsl.rxnorm');
+    return {
+        enabled: config.get<boolean>('searchEnabled', true),
+        url: config.get<string>('searchUrl', 'http://127.0.0.1:8765'),
+        release: config.get<string>('release', '2026-10-05')
+    };
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     registerContextHelp(context);
     const rxnorm = registerRxNorm(context);
@@ -42,13 +51,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     };
     const languageClient = new LanguageClient(
         'clinical-dsl', 'Clinical DSL', serverOptions,
-        { documentSelector: [{ scheme: '*', language: 'clinical-dsl' }] }
+        {
+            documentSelector: [{ scheme: '*', language: 'clinical-dsl' }],
+            initializationOptions: () => ({ rxnormSearch: rxnormSearchConfiguration() })
+        }
     );
     client = languageClient;
     let started = false;
     const refresh = new vscode.EventEmitter<void>();
     context.subscriptions.push(refresh);
     context.subscriptions.push(rxnorm.onDidChange(() => refresh.fire()));
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+        if (started && event.affectsConfiguration('clinicalDsl.rxnorm')) {
+            void languageClient.sendNotification('clinical-dsl/configureRxNormSearch', rxnormSearchConfiguration());
+        }
+    }));
 
     async function query(
         document: vscode.TextDocument,

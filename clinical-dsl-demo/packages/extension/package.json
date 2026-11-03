@@ -71,6 +71,18 @@
                     "default": true,
                     "description": "Resolve medications from shown plans when a .clinical file is saved."
                 },
+                "clinicalDsl.rxnorm.searchEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "scope": "resource",
+                    "description": "Suggest exact RxNorm products while typing Medication names. Requires the local Scala product-search service."
+                },
+                "clinicalDsl.rxnorm.searchUrl": {
+                    "type": "string",
+                    "default": "http://127.0.0.1:8765",
+                    "scope": "resource",
+                    "description": "Origin of the persistent local Scala product-search service. Only HTTP loopback addresses are accepted."
+                },
                 "clinicalDsl.rxnorm.pgHost": {
                     "type": "string",
                     "enum": [
@@ -105,6 +117,15 @@
                     "maximum": 1800,
                     "default": 300,
                     "description": "Timeout for each AST export or Scala invocation."
+                }
+            }
+        },
+        "configurationDefaults": {
+            "[clinical-dsl]": {
+                "editor.quickSuggestions": {
+                    "other": true,
+                    "comments": false,
+                    "strings": true
                 }
             }
         },
