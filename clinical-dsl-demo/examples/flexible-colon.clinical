@@ -1,0 +1,13 @@
+// Fictional syntax fixture, not a prescription or an RxNorm formulary entry.
+// Patient keeps age before condition; keyword-looking names retain their spelling.
+Patient Po: age 45, condition Dose
+
+// Reordered fields, mixed case, adjacent dose/unit, quoted product qualifiers.
+mEdIcAtIoN DemoLiquid: frequency bId, doseForm "Oral Solution", strength "160MG/5ML", route pO, dose 10MG
+
+// Plan references are case-insensitive; JSON retains declaration spelling.
+pLaN DemoPlan: prescribe demoliQuid, for po
+SHOW demoplan
+
+// Try ? with the cursor after dose 10MG or before an existing field.
+// Comments never count as fields. Use Ctrl+Space to edit a value or add a field.

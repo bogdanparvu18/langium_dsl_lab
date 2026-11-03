@@ -6,12 +6,12 @@ A Langium-based external domain-specific language for declaring patients, medica
 
 ### Colon syntax and contextual help
 
-Use `:` after the declaration name and commas between fields. Names remain identifiers; product strength and multiword dose forms do not need quotes in colon syntax.
+Use `:` after the declaration name. Medication and plan fields can be written in any order, with or without commas. Product strength and dose forms accept quoted or unquoted values. Quote a dose form containing field keywords to make its boundary explicit, for example `doseForm "Metered Dose Inhaler"`.
 
 ```text
 Patient DemoPatient: age 30, condition DemoCondition
-Medication aspirin: 15 mg, strength 325 mg, doseForm Oral Tablet, route PO, frequency PRN
-Plan DemoPlan: for DemoPatient, prescribe aspirin
+Medication aspirin: frequency prn, dose 15mg, strength 325mg, doseForm Oral Tablet, route po
+Plan DemoPlan: prescribe aspirin, for DemoPatient
 show DemoPlan
 ```
 
@@ -20,14 +20,14 @@ This is a syntax example, not a treatment recommendation. `15 mg` is the adminis
 In a writable `.clinical` editor:
 
 1. Press **Ctrl+Space** for completion suggestions.
-2. Press **?** for help based on the text before the cursor: declaration name, amount, strength, dose form, route, frequency, patient, plan, or `show`.
+2. Press **?** for concrete examples and missing fields. Help parses the entire declaration, including fields after the cursor; comments are ignored. The cursor selects the example to show, not which fields count as present.
 3. Choose **Show suggestions** in the help message to open completion at that position.
 
 The command is **Clinical DSL: Context Help (?)** in the Command Palette. Its default keybinding is **Shift+/**; on other keyboard layouts, rebind that command in Keyboard Shortcuts. The shortcut consumes the key without inserting `?`: it is editor help, not part of the grammar, saved document, or JSON sent to Scala. A question mark pasted into the source is not automatically removed and can cause a syntax error.
 
-Lowercase `patient`, `medication`, and `plan` remain accepted, as do legacy brace declarations. `show` stays lowercase. Completion provides local language suggestions; it does not query RxNorm on every keystroke.
+Medication and plan keywords and their supported values accept mixed case; units, routes and frequency values are normalized for downstream processing. The patient declaration keeps its existing structure. Completion provides local language suggestions; it does not query RxNorm on every keystroke.
 
-The AST/JSON contract is unchanged. The bridge still exports the plans selected by `show`, preserving source positions. No PostgreSQL reimport is needed for the syntax/help update.
+The JSON contract for valid documents is unchanged. The bridge still exports the plans selected by `show`, preserving source positions. Incomplete medication nodes have optional fields in the generated TypeScript AST; validation blocks preview/export until required fields are supplied. No PostgreSQL reimport is needed for the syntax/help update.
 
 ## Executive summary
 
@@ -85,98 +85,9 @@ This output is derived from the generator's implementation. It is deliberately l
 
 The language is defined in [`packages/language/src/clinical-dsl.langium`][grammar]. It uses Langium's grammar notation: EBNF-style grouping, alternatives, and repetition, extended with assignments that populate AST properties and typed cross-references.
 
-### Complete grammar
+### Current grammar
 
-```langium
-grammar ClinicalDSLDemo
-
-entry Model:
-    (
-        patient+=Patient |
-        medication+=Medication |
-        plan+=Plan |
-        display+=DisplayPlan 
-    )*;
-
-Patient:
-    ('patient' | 'Patient') name=ID
-    ('{' 'age' age=INT 'condition' condition=ID '}'
-    | ':' 'age' age=INT ',' 'condition' condition=ID);
-
-Medication:
-    ('medication' | 'Medication') name=ID
-    ('{'
-        amount=DoseAmount unit=Unit
-        ('strength' productStrength=STRING)?
-        ('doseForm' doseForm=STRING)?
-        'route' route=Route 'frequency' frequency=Frequency
-    '}'
-    | ':' amount=DoseAmount unit=Unit
-        (',' 'strength' productStrength=UnquotedStrength)?
-        (',' 'doseForm' doseForm=UnquotedForm)?
-        ',' 'route' route=Route ',' 'frequency' frequency=Frequency);
-
-UnquotedStrength returns string:
-    (DECIMAL | INT) ('mg' | 'mcg' | 'g')
-    ('/' (DECIMAL | INT)? 'ml')?;
-
-UnquotedForm returns string:
-    ID+;
-
-Plan:
-    ('plan' | 'Plan') name=ID
-    ('{' 'for' patient=[Patient] 'prescribe' medication=[Medication] '}'
-    | ':' 'for' patient=[Patient] ',' 'prescribe' medication=[Medication]);
-
-DisplayPlan:
-    'show' plan=[Plan:ID];
-
-// Keep the quantity numeric.
-// Suggested/allowed quantities are configured separately.
-DoseAmount returns number:
-    DECIMAL | INT;
-
-Unit returns string:
-    'mg'
-    | 'mcg'
-    | 'g'
-    | 'ml'
-    | 'puff'
-    | 'unit';
-
-Route returns string:
-    'PO'
-    | 'IV'
-    | 'IM'
-    | 'SC'
-    | 'PR'
-    | 'SL'
-    | 'BUCC';
-
-Frequency returns string:
-    'QD'
-    | 'BID'
-    | 'TID'
-    | 'QID'
-    | 'PRN'
-    | 'Q4H'
-    | 'Q6H'
-    | 'Q8H'
-    | 'Q12H'
-    | 'Q24H';
-
-
-hidden terminal WS: /\s+/;
-
-hidden terminal SL_COMMENT: /\/\/[^\n\r]*/;
-hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
-
-// DECIMAL must precede INT.
-terminal DECIMAL returns number: /[0-9]+\.[0-9]+/;
-terminal INT returns number: /[0-9]+/;
-terminal STRING: /"(\\.|[^"\\])*"|'(\\.|[^'\\])*'/;
-terminal ID: /[_a-zA-Z][\w_]*/;
-```
+The authoritative and complete grammar is the [`.langium` source][grammar]. It is not duplicated here so that changes to the language do not leave an outdated copy in this README.
 
 ### Reading the notation
 
@@ -184,14 +95,14 @@ terminal ID: /[_a-zA-Z][\w_]*/;
 | --- | --- |
 | `entry Model` | Parsing starts at `Model`. |
 | `'patient'`, `'age'`, `'{'` | Literal tokens expected in the input. |
-| `name=ID` | Assigns one identifier to a property named `name`. |
+| `name=Identifier` | Assigns one identifier to a property named `name`, including a keyword-looking name in this position. |
 | `patient+=Patient` | Appends a parsed `Patient` to an array property named `patient`. |
 | `A \| B` | Allows an alternative. |
 | `(...)*` | Allows zero or more repetitions of the group. |
-| `[Patient]`, `[Medication]`, `[Plan:ID]` | Reference an existing node of the indicated type instead of declaring a new one. |
+| `[Patient:Identifier]`, `[Medication:Identifier]`, `[Plan:Identifier]` | Reference an existing node of the indicated type instead of declaring a new one. |
 | `hidden terminal WS` | Recognizes whitespace without making it part of the domain model. |
 
-The [Langium grammar reference][langium-reference] explains the notation; the rules above define this project's particular language.
+The [Langium grammar reference][langium-reference] explains this notation; the [grammar source][grammar] defines this project's language.
 
 ### 3.1 The document root: `Model`
 
@@ -208,73 +119,55 @@ Model.display[]
 
 The property names are singular in the source, but `+=` makes them collections. The generator therefore correctly accesses `model.plan`, not `model.plans`.
 
-Top-level statement kinds can be interleaved. Inside each block, however, fields appear in the fixed order defined by its rule.
+Top-level statement kinds can be interleaved. The colon forms of medication and plan accept their fields in any order; the patient rule retains its existing order.
 
 ### 3.2 Patient declarations
 
-The `Patient` rule requires a name, an `age` field, and then a `condition` field. Use colon/comma syntax or legacy braces:
+The patient declaration retains its structure and keyword casing. The colon form requires a name, `age`, then `condition`:
 
 ```text
-patient Alice {
-    age 40
-    condition ExampleCondition
-}
+Patient Alice: age 40, condition ExampleCondition
 ```
 
-`Alice` becomes the node's `name`. The age must match `INT`; the condition must match `ID`. The rule does not allow multiple conditions, optional age, or an arbitrary free-text description.
-
-Changing the order to `condition ... age ...` does not satisfy the rule. Line breaks and indentation are flexible because whitespace is hidden; field order is not.
+`Alice` becomes the node's `name`. The age must match `INT`; the condition is a single identifier. The contextual `Identifier` rule allows keyword-looking names such as `Po` or `Dose` without changing their source spelling, so medication keyword matching does not reserve those names in patient declarations. This demo continues to declare patients locally; connecting a patient from Aurora PCM is a future integration, not implemented by this change.
 
 ### 3.3 Medication declarations
 
+Medication fields can be written in any order. For example, the following declarations represent the same values:
+
 ```text
-Medication DemoMedication: 2.5 mg, strength 10 mg/ml, doseForm Oral Solution, route PO, frequency PRN
+Medication DemoMedication: dose 2.5 mg, route PO, frequency PRN
+medication DemoMedication: frequency prn, route po, dose 2.5mg
 ```
 
-Fields have a fixed order: amount and unit, optional strength, optional dose form, required route, required frequency. The validators require a positive finite dose amount and require the two product qualifiers together. Completion examples such as `1`, `2.5`, and `10` are suggestions, not the allowed-dose list.
+Use only one declaration with a given medication name in a document; names that differ only in letter case are duplicates. The `dose` label is optional for compatibility with existing files. Commas between medication and plan fields are optional. A space between a numeric value and its unit is optional. The validators require a positive finite dose and require `strength` and `doseForm` together when supplied. Completion examples such as `1`, `2.5`, and `10` are syntax suggestions, not a clinical dose list.
 
-| Field | Accepted syntax |
+| Field | Supported syntax |
 | --- | --- |
 | Amount | Integer or decimal, such as `15` or `2.5`. |
 | Unit | `mg`, `mcg`, `g`, `ml`, `puff`, `unit`. |
-| Unquoted strength | Positive mass in `mg`, `mcg`, or `g`, optionally per `ml`, e.g. `10 mg/ml` or `50 mg/5 ml`. |
-| Unquoted dose form | One or more identifier words, e.g. `Oral Tablet`. |
+| Strength | Positive mass in `mg`, `mcg`, or `g`, optionally per `ml`, e.g. `10mg/ml`, `50 mg/5 ml`, or `"160MG/5ML"`. |
+| Dose form | Unquoted words such as `Oral Tablet` or `Metered Dose Inhaler`; use quotes for values containing other field keywords or ending in `Dose`. |
 | Route | `PO`, `IV`, `IM`, `SC`, `PR`, `SL`, `BUCC`. |
 | Frequency | `QD`, `BID`, `TID`, `QID`, `PRN`, `Q4H`, `Q6H`, `Q8H`, `Q12H`, `Q24H`. |
 
-The [value converter](packages/language/src/clinical-dsl-value-converter.ts) preserves word separation in unquoted values. Legacy syntax is still supported, with quoted product qualifiers and no `dose` keyword:
-
-```text
-medication DemoMedication {
-    2.5 mg
-    strength "10 mg/ml"
-    doseForm "Oral Solution"
-    route PO
-    frequency PRN
-}
-```
+Supported units are normalized to lowercase, while routes and frequencies are normalized to uppercase before projection. Strengths such as `160MG/5ML` and `160 mg / 5 ml` become `160 mg/5 ml`. Product strength and dose form are distinct from the administered dose. Normalization does not rewrite the user's document.
 
 ### 3.4 Plans and typed cross-references
 
-A `Plan` contains exactly one patient reference followed by exactly one medication reference:
+A complete plan contains one patient reference and one medication reference. Their order is flexible:
 
 ```text
-plan ExamplePlan {
-    for Alice
-    prescribe DemoMedication
-}
+Plan ExamplePlan: prescribe DemoMedication, for Alice
 ```
 
-The grammar uses:
+The following is also accepted without commas:
 
-```langium
-'for' patient=[Patient]
-'prescribe' medication=[Medication]
+```text
+Plan ExamplePlan: prescribe DemoMedication for Alice
 ```
 
-These assignments do not create another patient or medication. They create references whose targets must be nodes of the appropriate type. The omitted token in `[Patient]` is inferred from the target's `name` assignment; here that is `name=ID`. Thus `[Patient]` and `[Patient:ID]` express the same token choice for this particular rule. The same applies to `[Medication]`.
-
-For example, `for MissingPatient` can have a syntactically valid identifier while still failing reference resolution. The [service module][services] uses Langium's default services rather than implementing a separate custom linker.
+References link to declarations rather than creating new ones. Patient, medication and plan references are matched without regard to case. A declaration in the current document takes precedence over global declarations of the same name. If there is no local declaration, exactly one matching workspace declaration is required. Multiple matches within the chosen local/global tier produce an explicit ambiguity error; the linker never chooses by file loading order. Duplicate declarations in one document are also rejected. Workspace changes recheck existing references, including when a new file introduces a collision.
 
 ### 3.5 Display statements
 
@@ -282,7 +175,7 @@ For example, `for MissingPatient` can have a syntactically valid identifier whil
 show ExamplePlan
 ```
 
-creates a `DisplayPlan` whose `plan` property references a `Plan`. `[Plan:ID]` specifies the reference token explicitly.
+creates a `DisplayPlan` whose `plan` property references a `Plan`. `[Plan:Identifier]` specifies the reference syntax explicitly.
 
 The editor uses `show` for plan previews and the Scala bridge uses it to select plans for export and RxNorm resolution. The separate JavaScript [generator][generator] still iterates over all plans.
 
@@ -292,9 +185,9 @@ The editor uses `show` for plan previews and the Scala bridge uses it to select 
 
 `INT` accepts digits and returns a number; `DECIMAL` accepts digits on both sides of a decimal point and also returns a number. `DoseAmount` accepts either. Negative amounts are not part of the grammar.
 
-Line comments (`// ...`), block comments (`/* ... */`), and whitespace are hidden. The `STRING` terminal supports quoted values in legacy brace syntax. Colon syntax uses unquoted strength and dose form rules.
+Line comments (`// ...`), block comments (`/* ... */`), and whitespace are hidden. Both colon and legacy brace syntax support quoted product strength and dose form values. Comment-like text inside a quoted value is preserved as text.
 
-Keywords are case-sensitive, with explicit lowercase/title-case alternatives for patient, medication, and plan declarations. Semicolons belong to the grammar specification, not to user documents. Newlines are whitespace, so a declaration can wrap across lines; commas and field order still matter.
+Medication and plan syntax accepts case variations and flexible field order. This does not turn the language into unrestricted natural language: values and identifiers must still match the supported syntax. Semicolons belong to the grammar specification, not to user documents.
 
 ## 4. From text to a linked AST
 
@@ -471,9 +364,14 @@ After regenerating and building, run from `clinical-dsl-demo/`:
 ```bash
 npm test
 node --test packages/extension/test/context-help.test.mjs packages/extension/test/rxnorm.test.mjs
+node --test packages/extension/test/language-server-flow.test.mjs
 ```
 
-The language suite covers clinical syntax and validation, including colon syntax, unquoted qualifiers, and legacy compatibility. The extension suites cover contextual help and RxNorm process/preview behavior using mocks. These tests do not replace a visual check in Extension Development Host.
+The language suite covers syntax, normalization, contextual identifiers, quoted/unquoted qualifiers, completion, highlighting and incremental workspace linking. Context-help tests exercise the real parser with a mocked VS Code UI. The server-flow suite starts the actual language server through IPC, verifies normalized JSON and canonical names, and checks ambiguity, incomplete-input and stale-version handling. RxNorm process/preview tests use mocks; live PostgreSQL resolution and the VS Code UI still need manual verification.
+
+For a manual regression check, open [examples/flexible-colon.clinical](examples/flexible-colon.clinical). Move the cursor into the middle of the medication declaration and press `?`; existing fields to its right must not be reported missing. Try quoted forms and mixed-case references, and confirm Preview JSON retains `Po` and `DemoPlan` while normalizing units, route and frequency. The medication is fictional and is not expected to resolve in RxNorm.
+
+After changing the grammar in watch mode, run the normal build before reloading the extension: it reapplies selective case handling to the generated TextMate grammar and copies that file into the extension.
 
 Open `examples/colon-help.clinical` from the same checkout in the development host. Try Ctrl+Space and `?` at different field positions; confirm that help does not insert a question mark. Reload the host after rebuilding.
 

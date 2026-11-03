@@ -123,7 +123,7 @@
     "scripts": {
         "clean": "shx rm -fr *.tsbuildinfo out syntaxes",
         "vscode:prepublish": "npm run build",
-        "build:prepare": "shx mkdir -p ./syntaxes/ && shx cp -f ../language/syntaxes/clinical-dsl.tmLanguage.json ./syntaxes/clinical-dsl.tmLanguage.json",
+        "build:prepare": "node ../language/scripts/update-textmate.mjs && shx mkdir -p ./syntaxes/ && shx cp -f ../language/syntaxes/clinical-dsl.tmLanguage.json ./syntaxes/clinical-dsl.tmLanguage.json",
         "build": "npm run build:prepare && tsc -b tsconfig.json && node esbuild.mjs",
         "build:clean": "npm run clean && npm run build",
         "watch": "npm run build:prepare && concurrently -n tsc,esbuild -c blue,yellow \"tsc -b tsconfig.json --watch\" \"node esbuild.mjs --watch\""

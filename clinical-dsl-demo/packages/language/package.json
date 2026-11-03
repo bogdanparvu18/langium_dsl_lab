@@ -28,9 +28,9 @@
     },
     "scripts": {
         "clean": "shx rm -fr *.tsbuildinfo out",
-        "build": "echo 'No build step'",
+        "build": "node scripts/update-textmate.mjs",
         "build:clean": "npm run clean && npm run build",
-        "langium:generate": "langium generate",
+        "langium:generate": "langium generate && node scripts/update-textmate.mjs",
         "langium:watch": "langium generate --watch",
         "test": "vitest run"
     },

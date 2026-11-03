@@ -1,6 +1,10 @@
 import { type Module, inject } from 'langium';
 import { ClinicalDslValueConverter } from './clinical-dsl-value-converter.js';
-import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices } from 'langium/lsp';
+import { ClinicalDslTokenBuilder } from './clinical-dsl-token-builder.js';
+import { ClinicalDslScopeProvider } from './clinical-dsl-scope-provider.js';
+import { ClinicalDslLinker } from './clinical-dsl-linker.js';
+import { ClinicalDslDocumentBuilder } from './clinical-dsl-document-builder.js';
+import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices, type PartialLangiumSharedServices } from 'langium/lsp';
 import {
     ClinicalDSLDemoGeneratedModule,
     ClinicalDslGeneratedSharedModule
@@ -35,7 +39,14 @@ export const ClinicalDslModule:
         ClinicalDslServices,
         PartialLangiumServices & ClinicalDslAddedServices
     > = {
-        parser: { ValueConverter: () => new ClinicalDslValueConverter() },
+        parser: {
+            ValueConverter: () => new ClinicalDslValueConverter(),
+            TokenBuilder: () => new ClinicalDslTokenBuilder()
+        },
+        references: {
+            ScopeProvider: services => new ClinicalDslScopeProvider(services),
+            Linker: services => new ClinicalDslLinker(services)
+        },
         lsp: {
             CompletionProvider: services =>
                 new ClinicalDslCompletionProvider(services)
@@ -44,6 +55,10 @@ export const ClinicalDslModule:
             ClinicalDslValidator: () => new ClinicalDslValidator()
         }
     };
+
+const ClinicalDslSharedModule: Module<LangiumSharedServices, PartialLangiumSharedServices> = {
+    workspace: { DocumentBuilder: services => new ClinicalDslDocumentBuilder(services) }
+};
 
 /**
  * Create the full set of services required by Langium.
@@ -66,7 +81,8 @@ export function createClinicalDslServices(context: DefaultSharedModuleContext): 
 } {
     const shared = inject(
         createDefaultSharedModule(context),
-        ClinicalDslGeneratedSharedModule
+        ClinicalDslGeneratedSharedModule,
+        ClinicalDslSharedModule
     );
     const ClinicalDsl = inject(
         createDefaultModule({ shared }),
