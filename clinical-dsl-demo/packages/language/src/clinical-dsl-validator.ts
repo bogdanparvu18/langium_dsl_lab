@@ -53,6 +53,8 @@ export class ClinicalDslValidator {
         }
         const shownPlans = new Set<string>();
         for (const statement of model.display) {
+            // Parse recovery can create an unfinished show node without a reference.
+            if (!statement.plan?.$refText) continue;
             const name = (statement.plan.ref?.name ?? statement.plan.$refText).toLowerCase();
             if (shownPlans.has(name)) {
                 accept('error', `Plan "${statement.plan.$refText}" is shown more than once.`, {
@@ -88,7 +90,7 @@ export class ClinicalDslValidator {
         patient: Patient,
         accept: ValidationAcceptor
     ): void {
-        if (patient.name.length > 0 &&
+        if (patient.name &&
             patient.name[0] !== patient.name[0].toUpperCase()) {
             accept('warning', 'Patient name should start with a capital letter.', {
                 node: patient,

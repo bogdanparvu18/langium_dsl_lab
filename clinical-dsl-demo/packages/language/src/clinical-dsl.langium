@@ -9,12 +9,12 @@ entry Model:
     )*;
 
 Patient:
-    ('patient' | 'Patient') name=ID
-    ('{' 'age' age=INT 'condition' condition=ID '}'
-    | ':' 'age' age=INT ',' 'condition' condition=ID);
+    ('patient' | 'Patient') name=Identifier
+    ('{' 'age' age=INT 'condition' condition=Identifier '}'
+    | ':' 'age' age=INT ',' 'condition' condition=Identifier);
 
 Medication:
-    'medication' name=ID
+    'medication' name=Identifier
     ('{'
         amount=DoseAmount unit=Unit
         ('strength' productStrength=STRING)?
@@ -23,8 +23,8 @@ Medication:
     '}'
     | ':' (
         ('dose'? amount=DoseAmount unit=Unit |
-         'strength' productStrength=UnquotedStrength |
-         'doseForm' doseForm=UnquotedForm |
+         'strength' productStrength=ProductStrength |
+         'doseForm' doseForm=ProductForm |
          'route' route=Route | 'frequency' frequency=Frequency) ','?
     )*);
 
@@ -32,16 +32,33 @@ UnquotedStrength returns string:
     (DECIMAL | INT) ('mg' | 'mcg' | 'g')
     ('/' (DECIMAL | INT)? 'ml')?;
 
+ProductStrength returns string:
+    STRING | UnquotedStrength;
+
+ProductForm returns string:
+    STRING | UnquotedForm;
+
+// A word pair keeps "Metered Dose Inhaler" readable without consuming the
+// dose field in "doseForm Oral Tablet dose 10mg". Other reserved words or
+// forms ending in Dose can be quoted to make the value boundary explicit.
 UnquotedForm returns string:
-    ID+;
+    (ID | ('dose' ID))+;
+
+// Keywords are reserved by the lexer globally. In a name/reference position
+// they are ordinary identifiers, preserving names such as Patient Po or Dose.
+Identifier returns string:
+    ID | 'patient' | 'Patient' | 'age' | 'condition' |
+    'medication' | 'plan' | 'show' | 'for' | 'prescribe' |
+    'dose' | 'strength' | 'doseForm' | 'route' | 'frequency' |
+    Unit | Route | Frequency;
 
 Plan:
-    'plan' name=ID
-    ('{' 'for' patient=[Patient] 'prescribe' medication=[Medication] '}'
-    | ':' (('for' patient=[Patient] ','?) & ('prescribe' medication=[Medication] ','?)));
+    'plan' name=Identifier
+    ('{' 'for' patient=[Patient:Identifier] 'prescribe' medication=[Medication:Identifier] '}'
+    | ':' (('for' patient=[Patient:Identifier] ','?) & ('prescribe' medication=[Medication:Identifier] ','?)));
 
 DisplayPlan:
-    'show' plan=[Plan:ID];
+    'show' plan=[Plan:Identifier];
 
 // Keep the quantity numeric.
 // Suggested/allowed quantities are configured separately.

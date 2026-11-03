@@ -6,7 +6,7 @@ A Langium-based external domain-specific language for declaring patients, medica
 
 ### Colon syntax and contextual help
 
-Use `:` after the declaration name. Medication and plan fields can be written in any order, with or without commas. Names remain identifiers; product strength and multiword dose forms do not need quotes in colon syntax.
+Use `:` after the declaration name. Medication and plan fields can be written in any order, with or without commas. Product strength and dose forms accept quoted or unquoted values. Quote a dose form containing field keywords to make its boundary explicit, for example `doseForm "Metered Dose Inhaler"`.
 
 ```text
 Patient DemoPatient: age 30, condition DemoCondition
@@ -20,14 +20,14 @@ This is a syntax example, not a treatment recommendation. `15 mg` is the adminis
 In a writable `.clinical` editor:
 
 1. Press **Ctrl+Space** for completion suggestions.
-2. Press **?** for help based on the text before the cursor: declaration name, amount, strength, dose form, route, frequency, patient, plan, or `show`.
+2. Press **?** for concrete examples and missing fields. Help parses the entire declaration, including fields after the cursor; comments are ignored. The cursor selects the example to show, not which fields count as present.
 3. Choose **Show suggestions** in the help message to open completion at that position.
 
 The command is **Clinical DSL: Context Help (?)** in the Command Palette. Its default keybinding is **Shift+/**; on other keyboard layouts, rebind that command in Keyboard Shortcuts. The shortcut consumes the key without inserting `?`: it is editor help, not part of the grammar, saved document, or JSON sent to Scala. A question mark pasted into the source is not automatically removed and can cause a syntax error.
 
 Medication and plan keywords and their supported values accept mixed case; units, routes and frequency values are normalized for downstream processing. The patient declaration keeps its existing structure. Completion provides local language suggestions; it does not query RxNorm on every keystroke.
 
-The AST/JSON contract is unchanged. The bridge still exports the plans selected by `show`, preserving source positions. No PostgreSQL reimport is needed for the syntax/help update.
+The JSON contract for valid documents is unchanged. The bridge still exports the plans selected by `show`, preserving source positions. Incomplete medication nodes have optional fields in the generated TypeScript AST; validation blocks preview/export until required fields are supplied. No PostgreSQL reimport is needed for the syntax/help update.
 
 ## Executive summary
 
@@ -95,11 +95,11 @@ The authoritative and complete grammar is the [`.langium` source][grammar]. It i
 | --- | --- |
 | `entry Model` | Parsing starts at `Model`. |
 | `'patient'`, `'age'`, `'{'` | Literal tokens expected in the input. |
-| `name=ID` | Assigns one identifier to a property named `name`. |
+| `name=Identifier` | Assigns one identifier to a property named `name`, including a keyword-looking name in this position. |
 | `patient+=Patient` | Appends a parsed `Patient` to an array property named `patient`. |
 | `A \| B` | Allows an alternative. |
 | `(...)*` | Allows zero or more repetitions of the group. |
-| `[Patient]`, `[Medication]`, `[Plan:ID]` | Reference an existing node of the indicated type instead of declaring a new one. |
+| `[Patient:Identifier]`, `[Medication:Identifier]`, `[Plan:Identifier]` | Reference an existing node of the indicated type instead of declaring a new one. |
 | `hidden terminal WS` | Recognizes whitespace without making it part of the domain model. |
 
 The [Langium grammar reference][langium-reference] explains this notation; the [grammar source][grammar] defines this project's language.
@@ -123,13 +123,13 @@ Top-level statement kinds can be interleaved. The colon forms of medication and 
 
 ### 3.2 Patient declarations
 
-Patient syntax is unchanged. The colon form requires a name, `age`, then `condition`:
+The patient declaration retains its structure and keyword casing. The colon form requires a name, `age`, then `condition`:
 
 ```text
 Patient Alice: age 40, condition ExampleCondition
 ```
 
-`Alice` becomes the node's `name`. The age must match `INT`; the condition must match `ID`. This demo continues to declare patients locally; connecting a patient from Aurora PCM is a future integration, not implemented by this change.
+`Alice` becomes the node's `name`. The age must match `INT`; the condition is a single identifier. The contextual `Identifier` rule allows keyword-looking names such as `Po` or `Dose` without changing their source spelling, so medication keyword matching does not reserve those names in patient declarations. This demo continues to declare patients locally; connecting a patient from Aurora PCM is a future integration, not implemented by this change.
 
 ### 3.3 Medication declarations
 
@@ -146,12 +146,12 @@ Use only one declaration with a given medication name in a document; names that 
 | --- | --- |
 | Amount | Integer or decimal, such as `15` or `2.5`. |
 | Unit | `mg`, `mcg`, `g`, `ml`, `puff`, `unit`. |
-| Unquoted strength | Positive mass in `mg`, `mcg`, or `g`, optionally per `ml`, e.g. `10mg/ml` or `50 mg/5 ml`. |
-| Unquoted dose form | One or more identifier words, e.g. `Oral Tablet`. |
+| Strength | Positive mass in `mg`, `mcg`, or `g`, optionally per `ml`, e.g. `10mg/ml`, `50 mg/5 ml`, or `"160MG/5ML"`. |
+| Dose form | Unquoted words such as `Oral Tablet` or `Metered Dose Inhaler`; use quotes for values containing other field keywords or ending in `Dose`. |
 | Route | `PO`, `IV`, `IM`, `SC`, `PR`, `SL`, `BUCC`. |
 | Frequency | `QD`, `BID`, `TID`, `QID`, `PRN`, `Q4H`, `Q6H`, `Q8H`, `Q12H`, `Q24H`. |
 
-Supported units are normalized to lowercase, while routes and frequencies are normalized to uppercase before projection. Product strength and dose form are distinct from the administered dose. Existing syntax remains supported; normalization does not rewrite the user's document.
+Supported units are normalized to lowercase, while routes and frequencies are normalized to uppercase before projection. Strengths such as `160MG/5ML` and `160 mg / 5 ml` become `160 mg/5 ml`. Product strength and dose form are distinct from the administered dose. Normalization does not rewrite the user's document.
 
 ### 3.4 Plans and typed cross-references
 
@@ -167,7 +167,7 @@ The following is also accepted without commas:
 Plan ExamplePlan: prescribe DemoMedication for Alice
 ```
 
-References link to declarations rather than creating new ones. Patient, medication and plan references are matched without regard to case; duplicate declarations that differ only in case are rejected. A missing or unresolved reference produces a diagnostic. The patient declaration itself retains its current syntax.
+References link to declarations rather than creating new ones. Patient, medication and plan references are matched without regard to case. A declaration in the current document takes precedence over global declarations of the same name. If there is no local declaration, exactly one matching workspace declaration is required. Multiple matches within the chosen local/global tier produce an explicit ambiguity error; the linker never chooses by file loading order. Duplicate declarations in one document are also rejected. Workspace changes recheck existing references, including when a new file introduces a collision.
 
 ### 3.5 Display statements
 
@@ -175,7 +175,7 @@ References link to declarations rather than creating new ones. Patient, medicati
 show ExamplePlan
 ```
 
-creates a `DisplayPlan` whose `plan` property references a `Plan`. `[Plan:ID]` specifies the reference token explicitly.
+creates a `DisplayPlan` whose `plan` property references a `Plan`. `[Plan:Identifier]` specifies the reference syntax explicitly.
 
 The editor uses `show` for plan previews and the Scala bridge uses it to select plans for export and RxNorm resolution. The separate JavaScript [generator][generator] still iterates over all plans.
 
@@ -185,7 +185,7 @@ The editor uses `show` for plan previews and the Scala bridge uses it to select 
 
 `INT` accepts digits and returns a number; `DECIMAL` accepts digits on both sides of a decimal point and also returns a number. `DoseAmount` accepts either. Negative amounts are not part of the grammar.
 
-Line comments (`// ...`), block comments (`/* ... */`), and whitespace are hidden. The `STRING` terminal supports quoted values in legacy brace syntax. Colon syntax uses unquoted strength and dose form rules.
+Line comments (`// ...`), block comments (`/* ... */`), and whitespace are hidden. Both colon and legacy brace syntax support quoted product strength and dose form values. Comment-like text inside a quoted value is preserved as text.
 
 Medication and plan syntax accepts case variations and flexible field order. This does not turn the language into unrestricted natural language: values and identifiers must still match the supported syntax. Semicolons belong to the grammar specification, not to user documents.
 
@@ -364,9 +364,14 @@ After regenerating and building, run from `clinical-dsl-demo/`:
 ```bash
 npm test
 node --test packages/extension/test/context-help.test.mjs packages/extension/test/rxnorm.test.mjs
+node --test packages/extension/test/language-server-flow.test.mjs
 ```
 
-The language suite covers clinical syntax and validation, including colon syntax, unquoted qualifiers, and legacy compatibility. The extension suites cover contextual help and RxNorm process/preview behavior using mocks. These tests do not replace a visual check in Extension Development Host.
+The language suite covers syntax, normalization, contextual identifiers, quoted/unquoted qualifiers, completion, highlighting and incremental workspace linking. Context-help tests exercise the real parser with a mocked VS Code UI. The server-flow suite starts the actual language server through IPC, verifies normalized JSON and canonical names, and checks ambiguity, incomplete-input and stale-version handling. RxNorm process/preview tests use mocks; live PostgreSQL resolution and the VS Code UI still need manual verification.
+
+For a manual regression check, open [examples/flexible-colon.clinical](examples/flexible-colon.clinical). Move the cursor into the middle of the medication declaration and press `?`; existing fields to its right must not be reported missing. Try quoted forms and mixed-case references, and confirm Preview JSON retains `Po` and `DemoPlan` while normalizing units, route and frequency. The medication is fictional and is not expected to resolve in RxNorm.
+
+After changing the grammar in watch mode, run the normal build before reloading the extension: it reapplies selective case handling to the generated TextMate grammar and copies that file into the extension.
 
 Open `examples/colon-help.clinical` from the same checkout in the development host. Try Ctrl+Space and `?` at different field positions; confirm that help does not insert a question mark. Reload the host after rebuilding.
 

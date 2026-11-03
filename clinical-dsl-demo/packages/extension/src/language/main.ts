@@ -25,9 +25,9 @@ const { shared, ClinicalDsl } = createClinicalDslServices({ connection, ...NodeF
 
 /** Project a resolved plan into plain JSON data; do not serialize AST internals. */
 function projectPlan(statement: DisplayPlan) {
-    const plan = statement.plan.ref;
+    const plan = statement.plan?.ref;
     if (!plan) {
-        throw new Error(`Cannot resolve plan "${statement.plan.$refText}".`);
+        throw new Error(`Cannot resolve plan "${statement.plan?.$refText ?? '(missing)'}".`);
     }
     const patient = plan.patient.ref;
     const medication = plan.medication.ref;
@@ -93,7 +93,7 @@ connection.onRequest(
                 endOffset: document.textDocument.offsetAt(range.end),
                 sourceText: document.textDocument.getText(range),
                 // RxNorm reports use the declaration's canonical spelling as orderId.
-                planName: statement.plan.ref?.name ?? statement.plan.$refText
+                planName: statement.plan?.ref?.name ?? statement.plan?.$refText ?? '(missing)'
             };
             if (errors.length) {
                 item.error = errors.join('\n');
