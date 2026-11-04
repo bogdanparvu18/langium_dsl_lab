@@ -3,12 +3,15 @@ import {
     DefaultCompletionProvider,
     type CompletionAcceptor,
     type CompletionContext,
+    type LangiumServices,
     type NextFeature
 } from 'langium/lsp';
 
 import { DEMO_AMOUNT_OPTIONS } from './clinical-dsl-presets.js';
 import { isMedication, isPlan } from './generated/ast.js';
-import { CompletionItemKind, type CancellationToken, type CompletionParams, type CompletionList } from 'vscode-languageserver';
+import { CancellationTokenSource, CompletionItemKind, type CancellationToken, type CompletionParams, type CompletionList, type Connection, type InitializeParams } from 'vscode-languageserver';
+import { RxNormProductSearch, searchOptions } from './rxnorm-product-search.js';
+import { productCompletion } from './rxnorm-product-completion.js';
 
 /** Fictional items for testing the editor, NOT a clinical formulary. */
 const MEDICATION_CATALOG: ReadonlyArray<{
@@ -22,7 +25,113 @@ const MEDICATION_CATALOG: ReadonlyArray<{
 
 /** Adds name suggestions, preserving Langium keyword/reference completion. */
 export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
+    private readonly productSearch = new RxNormProductSearch();
+    private readonly connection?: Connection;
+    private readonly documents;
+    private rxnormOptions: unknown;
+    private resourceConfiguration = false;
+    private configurationEpoch = 0;
+    private sequence = 0;
+    private readonly requests = new Map<string, number>();
+    private readonly pending = new Map<string, CancellationTokenSource>();
+
+    constructor(services: LangiumServices) {
+        super(services);
+        this.connection = services.shared.lsp.Connection;
+        this.documents = services.shared.workspace.LangiumDocuments;
+        this.connection?.onNotification('clinical-dsl/configureRxNormSearch', options => this.configureRxNorm(options));
+        // Langium completion holds a workspace read lock. Release a pending HTTP
+        // search immediately when ANY document needs rebuilding under its write lock.
+        const cancelPending = () => { for (const source of this.pending.values()) source.cancel(); };
+        services.shared.workspace.TextDocuments.onDidChangeContent(cancelPending);
+        services.shared.workspace.TextDocuments.onDidOpen(cancelPending);
+        services.shared.workspace.TextDocuments.onDidClose(cancelPending);
+    }
+
+    protected override initialize(params: InitializeParams): void {
+        super.initialize(params);
+        this.resourceConfiguration = params.capabilities.workspace?.configuration === true;
+        this.configureRxNorm(params.initializationOptions?.rxnormSearch);
+    }
+
+    configureRxNorm(options: unknown): void {
+        this.rxnormOptions = options;
+        this.configurationEpoch++;
+        this.productSearch.clear();
+        for (const source of this.pending.values()) source.cancel();
+    }
+
     override async getCompletion(document: LangiumDocument, params: CompletionParams, cancelToken?: CancellationToken): Promise<CompletionList | undefined> {
+        const uri = document.uri.toString();
+        const request = ++this.sequence;
+        const epoch = this.configurationEpoch;
+        const version = document.textDocument.version;
+        this.pending.get(uri)?.cancel();
+        const cancellation = new CancellationTokenSource();
+        const subscription = cancelToken?.onCancellationRequested(() => cancellation.cancel());
+        if (cancelToken?.isCancellationRequested) cancellation.cancel();
+        this.pending.set(uri, cancellation);
+        this.requests.set(uri, request);
+        const current = () => !cancellation.token.isCancellationRequested && this.requests.get(uri) === request &&
+            this.configurationEpoch === epoch && document.textDocument.version === version &&
+            (this.documents.getDocument(document.uri)?.textDocument.version ?? version) === version;
+        try {
+            const result = await this.getSyntaxCompletion(document, params, cancellation.token);
+            if (!result || !current()) return undefined;
+            const offset = document.textDocument.offsetAt(params.position);
+            const medication = AstUtils.streamContents(document.parseResult.value).filter(isMedication).find(node => {
+                const name = node.$cstNode && GrammarUtils.findNodesForProperty(node.$cstNode, 'name')[0];
+                const binding = node.$cstNode && GrammarUtils.findNodesForProperty(node.$cstNode, 'rxcui')[0];
+                return (name && name.offset <= offset && offset <= name.end) ||
+                    (binding && binding.offset < offset && offset < binding.end);
+            });
+            if (!medication?.$cstNode) return result;
+            const name = GrammarUtils.findNodesForProperty(medication.$cstNode, 'name')[0];
+            if (!name || typeof medication.name !== 'string') return result;
+            const bindingValue = GrammarUtils.findNodesForProperty(medication.$cstNode, 'rxcui').find(node => node.offset < offset && offset < node.end);
+            const prefix = document.textDocument.getText().slice(bindingValue ? bindingValue.offset + 1 : name.offset, offset);
+            // Re-request as a prefix grows, including after an empty/too-short result.
+            result.isIncomplete = true;
+            if (prefix.length < 2) return result;
+            let configured = this.rxnormOptions;
+            if (this.resourceConfiguration && this.connection) {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                let listener: { dispose(): void } | undefined;
+                try {
+                    // A client configuration RPC must not hold the workspace lock
+                    // after a document edit, even when that client is unresponsive.
+                    const settings = await Promise.race([
+                        this.connection.workspace.getConfiguration({ scopeUri: uri, section: 'clinicalDsl.rxnorm' }),
+                        new Promise<undefined>(resolve => {
+                            timer = setTimeout(() => resolve(undefined), 1000);
+                            listener = cancellation.token.onCancellationRequested(() => resolve(undefined));
+                            if (cancellation.token.isCancellationRequested) resolve(undefined);
+                        })
+                    ]);
+                    if (!current()) return undefined;
+                    if (!settings) return result;
+                    configured = { enabled: settings?.searchEnabled, url: settings?.searchUrl, release: settings?.release };
+                } catch { return current() ? result : undefined; }
+                finally { if (timer) clearTimeout(timer); listener?.dispose(); }
+            }
+            const options = searchOptions(configured);
+            if (!options || !current()) return result;
+            const products = await this.productSearch.search(prefix, options, cancellation.token);
+            if (!current()) return undefined;
+            const items = products.items.flatMap((product, index) => {
+                const item = productCompletion(document, medication, name, product, prefix, index, bindingValue);
+                return item ? [item] : [];
+            });
+            return { ...result, items: [...items, ...result.items] };
+        } finally {
+            if (this.requests.get(uri) === request) this.requests.delete(uri);
+            if (this.pending.get(uri) === cancellation) this.pending.delete(uri);
+            subscription?.dispose();
+            cancellation.dispose();
+        }
+    }
+
+    private async getSyntaxCompletion(document: LangiumDocument, params: CompletionParams, cancelToken?: CancellationToken): Promise<CompletionList | undefined> {
         const result = await super.getCompletion(document, params, cancelToken);
         if (!result) return result;
         const offset = document.textDocument.offsetAt(params.position);
@@ -162,7 +271,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
 
 const FIELD_KEYWORDS = new Map([
     ['dose', 'amount'], ['route', 'route'], ['frequency', 'frequency'],
-    ['strength', 'productStrength'], ['doseForm', 'doseForm'],
+    ['strength', 'productStrength'], ['doseForm', 'doseForm'], ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease'],
     ['for', 'patient'], ['prescribe', 'medication']
 ]);
 const RULE_FIELDS = new Map([

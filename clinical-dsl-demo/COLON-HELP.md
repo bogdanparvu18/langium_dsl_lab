@@ -31,11 +31,15 @@ For a concrete hint, place the cursor after `Medication aspirin: dose 15mg,` and
 
 Product strength and dose form can also be quoted: `strength "160MG/5ML"`, `doseForm "Metered Dose Inhaler"`. The latter also works without quotes; use quotes for other forms containing field keywords or ending in `Dose`. Keyword-looking names such as `Patient Po` retain their spelling. Patient field order and keyword casing remain unchanged.
 
+An exact product selection persists as `rxcui "900001", rxnormRelease "2026-10-05"`, in either order. This numeric ID is a fictional syntax example; select an actual product from the RxNorm suggestions. Both fields are required together, accept mixed-case field labels, and use quoted values. RxCUI stays a string, and the release must be a valid calendar date. Press **?** after either field for a concrete example of the missing counterpart. The medication name remains the local alias used by Plan; selecting a product does not determine the administered dose or frequency. Optional `strength` and `doseForm` must agree with the bound product when supplied.
+
+For a product search that preserves an existing alias, type a prefix inside the quoted RxCUI field, such as `rxcui "aspi"`, and accept a product with Tab (or first open the list with Ctrl+Space). The prefix is temporary editing text; export requires the numeric RxCUI inserted by selection. See [RxNorm product autocomplete](RXNORM-AUTOCOMPLETE.md) for the local service setup.
+
 References are case-insensitive with local-first precedence. When no local declaration exists, two matching declarations in other files produce an ambiguity error; they are never selected by loading order. Adding, renaming or deleting a file refreshes dependent references.
 
-Positive numeric doses are accepted; the old demo list is no longer a validation constraint. Existing completion examples remain a fictional demo catalog, not live RxNorm suggestions. Product resolution still runs on save or through the RxNorm command using the configured Scala/PostgreSQL installation. No database connection is needed for syntax help.
+Positive numeric doses are accepted; the old demo list is no longer a validation constraint. RxNorm product suggestions require the local search service described in [RXNORM-AUTOCOMPLETE.md](RXNORM-AUTOCOMPLETE.md). Product resolution still runs on save or through the RxNorm command using the configured Scala/PostgreSQL installation. No database connection is needed for syntax help.
 
-The exported JSON contract is unchanged. Rebuild Langium before running Scala bridge tests:
+Unbound declarations retain the existing JSON contract. Bound medications add `productBinding: { rxcui, release }`; bridge requests containing a binding use schema version `2` and policy `explicit-product-v1`. Update the companion Scala project before exporting bound declarations. Rebuild Langium before running Scala bridge tests:
 
 ```sh
 LANGIUM_ROOT=/absolute/path/to/langium_dsl_lab/clinical-dsl-demo node --test bridge/export-ast.test.mjs

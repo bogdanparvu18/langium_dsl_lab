@@ -192,3 +192,24 @@ Plan DemoPlan: for Alice, prescribe DemoMed
         assert.doesNotMatch(response.items[0].error, /error occurred during validation|TypeError/i);
     }
 });
+
+test('real language server persists product binding in JSON and blocks incomplete binding edits', { timeout: 10000 }, async t => {
+    const server = await startServer(t);
+    const uri = 'file:///clinical-flow/bound-product.clinical';
+    const text = `Patient Alice: age 45, condition Fever
+Medication ChosenProduct: RXNORMRELEASE "2026-10-05" dose 10mg RXCUI "900001" route PO frequency BID
+Plan DemoPlan: prescribe chosenproduct, for Alice
+show DemoPlan`;
+    await server.update(uri, text);
+    const response = await server.preview(uri, 1);
+    assert.equal(response.items[0].error, undefined);
+    const medication = JSON.parse(response.items[0].json).medication;
+    assert.deepEqual(medication.productBinding, { rxcui: '900001', release: '2026-10-05' });
+    assert.equal(medication.name, 'ChosenProduct');
+    assert.deepEqual(medication.dose, { amount: 10, unit: 'mg' });
+
+    await server.update(uri, text.replace('RXNORMRELEASE "2026-10-05" ', ''), 2);
+    const invalid = await server.preview(uri, 2);
+    assert.equal(invalid.items[0].json, undefined);
+    assert.match(invalid.items[0].error, /requires rxnormRelease/);
+});

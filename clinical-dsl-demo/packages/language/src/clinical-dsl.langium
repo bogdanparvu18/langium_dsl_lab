@@ -25,6 +25,7 @@ Medication:
         ('dose'? amount=DoseAmount unit=Unit |
          'strength' productStrength=ProductStrength |
          'doseForm' doseForm=ProductForm |
+         'rxcui' rxcui=STRING | 'rxnormRelease' rxnormRelease=STRING |
          'route' route=Route | 'frequency' frequency=Frequency) ','?
     )*);
 
@@ -49,7 +50,7 @@ UnquotedForm returns string:
 Identifier returns string:
     ID | 'patient' | 'Patient' | 'age' | 'condition' |
     'medication' | 'plan' | 'show' | 'for' | 'prescribe' |
-    'dose' | 'strength' | 'doseForm' | 'route' | 'frequency' |
+    'dose' | 'strength' | 'doseForm' | 'route' | 'frequency' | 'rxcui' | 'rxnormRelease' |
     Unit | Route | Frequency;
 
 Plan:

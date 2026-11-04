@@ -10,7 +10,7 @@ export function registerValidationChecks(services: ClinicalDslServices): void {
     const checks: ValidationChecks<ClinicalDslAstType> = {
         Model: validator.checkDuplicateNames,
         Patient: validator.checkPatientStartsWithCapital,
-        Medication: [validator.checkMedicationFields, validator.checkMedicationAmount, validator.checkProductQualifiers]
+        Medication: [validator.checkMedicationFields, validator.checkMedicationAmount, validator.checkProductQualifiers, validator.checkProductBinding]
     };
     services.validation.ValidationRegistry.register(checks, validator);
 }
@@ -19,7 +19,8 @@ export class ClinicalDslValidator {
     checkMedicationFields(medication: Medication, accept: ValidationAcceptor): void {
         const fields = [
             ['amount', 'dose'], ['route', 'route'], ['frequency', 'frequency'],
-            ['productStrength', 'strength'], ['doseForm', 'doseForm']
+            ['productStrength', 'strength'], ['doseForm', 'doseForm'],
+            ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease']
         ] as const;
         for (const [property, label] of fields) {
             const occurrences = GrammarUtils.findNodesForProperty(medication.$cstNode, property);
@@ -83,6 +84,31 @@ export class ClinicalDslValidator {
             accept('error', 'Specify strength and doseForm together to identify a product.', {
                 node: medication, property: strength !== undefined ? 'productStrength' : 'doseForm'
             });
+        }
+    }
+
+    checkProductBinding(medication: Medication, accept: ValidationAcceptor): void {
+        const { rxcui, rxnormRelease } = medication;
+        if ((rxcui !== undefined) !== (rxnormRelease !== undefined)) {
+            accept('error', rxcui !== undefined
+                ? 'An explicit RxCUI requires rxnormRelease, for example rxnormRelease "2026-10-05".'
+                : 'An RxNorm release requires a selected product RxCUI, for example rxcui "900001" (syntax example only).', {
+                node: medication, property: rxcui !== undefined ? 'rxcui' : 'rxnormRelease'
+            });
+        }
+        if (rxcui !== undefined && !/^[1-9][0-9]{0,19}$/.test(rxcui)) {
+            accept('error', 'RxCUI must be a quoted positive digit string of at most 20 digits, for example rxcui "900001" (syntax example only).', {
+                node: medication, property: 'rxcui'
+            });
+        }
+        if (rxnormRelease !== undefined) {
+            const date = /^\d{4}-\d{2}-\d{2}$/.test(rxnormRelease) && !rxnormRelease.startsWith('0000-')
+                ? new Date(`${rxnormRelease}T00:00:00.000Z`) : undefined;
+            if (!date || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== rxnormRelease) {
+                accept('error', 'RxNorm release must be a valid YYYY-MM-DD date, for example rxnormRelease "2026-10-05".', {
+                    node: medication, property: 'rxnormRelease'
+                });
+            }
         }
     }
 

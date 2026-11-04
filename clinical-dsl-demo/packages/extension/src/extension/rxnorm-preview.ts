@@ -16,7 +16,10 @@ export function withRxNormPreview(json: string, state: RxNormPreviewState): stri
             break;
         case 'complete': {
             const { report, resolution } = state;
-            if (resolution.mention.orderId !== plan.name || resolution.mention.originalText !== plan.medication.name) {
+            const binding = plan.medication.productBinding as { rxcui?: string; release?: string } | undefined;
+            if (resolution.mention.orderId !== plan.name || resolution.mention.originalText !== plan.medication.name ||
+                binding?.rxcui !== resolution.mention.productBinding?.rxcui ||
+                binding?.release !== resolution.mention.productBinding?.release) {
                 throw new Error('The RxNorm result does not belong to the previewed plan and medication.');
             }
             const metadata = {
@@ -32,7 +35,7 @@ export function withRxNormPreview(json: string, state: RxNormPreviewState): stri
                         productEvidence: resolution.productEvidence } : {}) };
             } else if (resolution.status === 'productNotFound') {
                 rxnorm = { ...metadata, code: 'PRODUCT_NOT_FOUND',
-                    error: 'No product matches productStrength and doseForm in this local RxNorm release.',
+                    error: 'The selected RxCUI or product qualifiers do not match a product in this local RxNorm release.',
                     concept: resolution.initialConcept, selectedProduct: null, diagnostics: resolution.diagnostics };
             } else if (resolution.status === 'needsClarification') {
                 rxnorm = { ...metadata, message: 'Medication needs clarification.',

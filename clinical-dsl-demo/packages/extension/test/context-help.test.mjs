@@ -127,3 +127,19 @@ test('help tolerates incomplete declarations without leaking parser exceptions',
     assert.notEqual(result.message.length, 0);
   }
 });
+
+test('binding help explains the missing counterpart and shows a concrete syntax example', async () => {
+  const prefix = 'Medication DemoMed: dose 10mg route PO frequency BID ';
+  const withId = (await help(prefix + 'rxcui "900001"')).message;
+  assert.match(withId, /rxnormRelease \(required with rxcui\)/);
+  assert.match(withId, /rxnormRelease "2026-10-05"/);
+  const withRelease = (await help(prefix + 'rxnormRelease "2026-10-05"')).message;
+  assert.match(withRelease, /rxcui \(required with rxnormRelease\)/);
+  assert.match(withRelease, /rxcui "900001"/);
+  assert.match(withRelease, /fictional/);
+  const source = prefix + 'rxcui "900001" rxnormRelease "2026-10-05"';
+  const complete = (await help(source, undefined, false, source.indexOf('rxcui') + 'rxcui'.length)).message;
+  assert.match(complete, /Required medication fields are present/);
+  assert.match(complete, /Explicit product binding example/);
+  assert.doesNotMatch(complete, /Missing or incomplete/);
+});
