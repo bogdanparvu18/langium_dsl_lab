@@ -99,21 +99,72 @@ function apply(item: CompletionItem, document: Awaited<ReturnType<typeof complet
 }
 
 describe('product completion transactions', () => {
+    test.each([
+        ['aspi|', 'Medication Aspirin:'],
+        ['Medication MorningMedication: aspi|', 'Medication MorningMedication:']
+    ])('accepting a bare prefix in %s writes the exact catalog name and ID', async (draft, declaration) => {
+        const result = await complete(draft);
+        expect(result.item).toBeDefined();
+        const text = apply(result.item!, result.document);
+        expect(text).toBe(`${declaration} product "Aspirin fixture product" rxcui "900001"`);
+    });
+
+    test('a standalone prefix between declarations creates a collision-free medication and replaces the full word', async () => {
+        const prefix = 'Medication ASPIRIN: dose 1mg route PO frequency QD\nPatient Alice: age 45, condition Fever\n';
+        const suffix = '\nPlan MorningPlan: for Alice prescribe Aspirin_900001';
+        const result = await complete(prefix + 'aspi|rin' + suffix);
+        expect(result.item).toBeDefined();
+        const changed = apply(result.item!, result.document);
+        expect(changed).toBe(prefix + 'Medication Aspirin_900001: product "Aspirin fixture product" rxcui "900001"' + suffix);
+    });
+
+    test('bare lookup can select a mixed-case prefix after a completed administration field', async () => {
+        const met = { ...product, display: 'Metformin fixture tablet', rxcui: '900003' };
+        const result = await complete('Medication MorningMedication: dose 20mg, mEtF|ormin route IV frequency PRN',
+            async () => response('metf', { items: [met] }));
+        expect(result.item?.label).toBe(met.display);
+        const changed = apply(result.item!, result.document);
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(changed);
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication).toHaveLength(1);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({
+            name: 'MorningMedication', productName: met.display, rxcui: met.rxcui, amount: 20, unit: 'mg', route: 'IV', frequency: 'PRN'
+        });
+    });
+
+    test('an indented prefix after the medication colon belongs to the existing alias', async () => {
+        const result = await complete('Medication Morning:\n  aspi|');
+        expect(result.item).toBeDefined();
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(apply(result.item!, result.document));
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication).toHaveLength(1);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ name: 'Morning', productName: product.display, rxcui: product.rxcui });
+    });
+
+    test('searching in a quoted product label updates its paired RxCUI', async () => {
+        const result = await complete('Medication Morning: product "aspi|rin" rxcui "900002"');
+        expect(result.item).toBeDefined();
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(apply(result.item!, result.document));
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ name: 'Morning', productName: product.display, rxcui: product.rxcui });
+    });
+
     test('new prefix becomes readable alias plus durable exact binding', async () => {
         const result = await complete('medication aspi|');
         expect(result.item).toBeDefined();
         const text = apply(result.item!, result.document);
-        expect(text).toBe('medication Aspirin: rxcui "900001" rxnormRelease "2026-10-05"');
+        expect(text).toBe('medication Aspirin: product "Aspirin fixture product" rxcui "900001"');
         const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(text);
         expect(parsed.parseResult.parserErrors).toEqual([]);
-        expect(parsed.parseResult.value.medication[0].rxcui).toBe('900001');
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ rxcui: product.rxcui, productName: product.display });
+        expect(parsed.parseResult.value.medication[0].rxnormRelease).toBeUndefined();
         expect(parsed.parseResult.value.medication[0].amount).toBeUndefined();
     });
 
     test('selecting a product preserves existing alias, fields, order and Plan references', async () => {
         const result = await complete('medication aspi|: frequency BID dose 10mg route PO strength "10mg" doseForm "Oral Tablet"\nPlan P: for A prescribe aspi');
         const text = apply(result.item!, result.document);
-        expect(text).toContain('medication aspi: rxcui "900001" rxnormRelease "2026-10-05"');
+        expect(text).toContain('medication aspi: product "Aspirin fixture product" rxcui "900001"');
         expect(text).toContain('frequency BID dose 10mg route PO strength "10mg" doseForm "Oral Tablet"');
         expect(text).toContain('prescribe aspi');
     });
@@ -121,26 +172,65 @@ describe('product completion transactions', () => {
     test('reselection replaces both binding values without duplicate fields', async () => {
         const result = await complete('medication aspi|: RXNORMRELEASE "2025-01-06" route po RXCUI "900002"');
         const text = apply(result.item!, result.document);
-        expect(text).toBe('medication aspi: RXNORMRELEASE "2026-10-05" route po RXCUI "900001"');
+        expect(text).toBe('medication aspi: product "Aspirin fixture product" route po RXCUI "900001"');
     });
 
     test('typing a product prefix inside rxcui selects for an arbitrary existing alias', async () => {
         const result = await complete('medication MyMorningMed: route po rxcui "aspi|" dose 10mg frequency bid');
         const text = apply(result.item!, result.document);
-        expect(text).toBe('medication MyMorningMed: rxnormRelease "2026-10-05"  route po rxcui "900001" dose 10mg frequency bid');
+        expect(text).toBe('medication MyMorningMed: route po product "Aspirin fixture product" rxcui "900001" dose 10mg frequency bid');
         expect(result.item!.textEdit).toMatchObject({ newText: '900001' });
     });
 
-    test('rxcui reselection preserves single quotes and updates existing release', async () => {
+    test('accepting a quoted prefix fills an unfinished product field once', async () => {
+        const result = await complete('Medication MorningMedication: product rxcui "aspi|"');
+        const text = apply(result.item!, result.document);
+        expect(text).toBe('Medication MorningMedication: product "Aspirin fixture product" rxcui "900001"');
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(text);
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+    });
+
+    test('rxcui reselection preserves single quotes and migrates the old release field', async () => {
         const result = await complete("medication MyMorningMed: rxcui 'aspi|rin' rxnormRelease '2025-01-06'");
         const text = apply(result.item!, result.document);
-        expect(text).toBe('medication MyMorningMed: rxcui \'900001\' rxnormRelease "2026-10-05"');
+        expect(text).toBe('medication MyMorningMed: rxcui \'900001\' product "Aspirin fixture product"');
         expect(text.match(/rxcui/g)).toHaveLength(1);
     });
 
     test('an incomplete binding label gets a value, not a duplicate label', async () => {
         const result = await complete('medication aspi|: rxcui');
-        expect(apply(result.item!, result.document)).toBe('medication aspi: rxnormRelease "2026-10-05"  rxcui "900001"');
+        expect(apply(result.item!, result.document)).toBe('medication aspi: product "Aspirin fixture product" rxcui "900001"');
+    });
+
+    test('reselection updates the visible product, preserves comments and removes legacy release', async () => {
+        const result = await complete('Medication MorningMedication: PRODUCT "Old", rxnormRelease /* provenance */ "2025-01-06",\n' +
+            '  rxcui "aspi|", dose 10mg route PO frequency BID\nPlan P: prescribe MorningMedication for A');
+        const text = apply(result.item!, result.document);
+        expect(text).toContain('PRODUCT "Aspirin fixture product"');
+        expect(text).toContain('/* provenance */');
+        expect(text).toContain('rxcui "900001", dose 10mg route PO frequency BID');
+        expect(text).toContain('prescribe MorningMedication');
+        expect(text).not.toMatch(/rxnormRelease/i);
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(text);
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ productName: product.display, rxcui: product.rxcui });
+    });
+
+    test('copies the chosen label exactly, including punctuation, whitespace and Unicode', async () => {
+        const display = 'Aspirin "A" \\ B  /  [O\'Brien] µg';
+        const result = await complete('Medication product: doseForm Oral Tablet rxcui "aspi|"',
+            async () => response('aspi', { items: [{ ...product, display }] }));
+        const text = apply(result.item!, result.document);
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(text);
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ name: 'product', doseForm: 'Oral Tablet', productName: display, rxcui: product.rxcui });
+    });
+
+    test('a syntax suggestion never inserts the legacy release field', async () => {
+        const result = await complete('medication Test: |');
+        const labels = result.result?.items.map(item => item.label);
+        expect(labels).toContain('product');
+        expect(labels).not.toContain('rxnormRelease');
     });
 
     test('new alias avoids existing case-insensitive collisions', async () => {
@@ -151,12 +241,16 @@ describe('product completion transactions', () => {
     test('another incomplete Medication does not break alias collision checks', async () => {
         const result = await complete('medication :\nmedication aspi|');
         expect(result.item).toBeDefined();
-        expect(apply(result.item!, result.document)).toContain('medication Aspirin: rxcui "900001"');
+        expect(apply(result.item!, result.document)).toContain('medication Aspirin: product "Aspirin fixture product" rxcui "900001"');
     });
 
     test('does not query from patient names, plan references, comments or values', async () => {
         for (const source of ['Patient aspi|: age 1, condition Fever', 'Plan P: prescribe aspi| for A',
-            '// medication aspi|', 'medication Demo: doseForm "aspi|"']) {
+            'Patient P: age 45, condition aspi|', 'show aspi|', '// medication aspi|',
+            'Medication Morning: /* aspi| */', 'medication Demo: doseForm "aspi|"',
+            'Medication Demo: doseForm Oral aspi|', 'Medication Demo: route aspi|',
+            'Medication Demo: frequency aspi|', 'Medication Demo: dose aspi|', 'Medication Demo: strength "aspi|"',
+            'Medication Demo: route\naspi|', 'Plan P: prescribe\naspi|']) {
             const mock = vi.fn(async () => response());
             const result = await complete(source, mock);
             expect(result.item).toBeUndefined();

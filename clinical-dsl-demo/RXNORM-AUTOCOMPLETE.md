@@ -1,12 +1,12 @@
 # RxNorm product autocomplete
 
-The editor can search the locally imported RxNorm release while a Medication declaration is incomplete. The suggestion label shows the complete product name; its details identify the RxCUI and type. Choosing a suggestion with **Tab** writes the product identity into the document, so it survives saving, reopening, and AST export.
+The editor can search the locally imported RxNorm release while a Medication declaration is incomplete. The suggestion label shows the complete product name; its details identify the RxCUI and type. Choosing a suggestion with **Tab** writes the complete product name and its RxCUI into the document, so it survives saving, reopening, and AST export.
 
 Search returns **SCD** (semantic clinical drug) and **SBD** (semantic branded drug) products. A bare ingredient match such as `aspirin` is not treated as a selected product.
 
 ## Start the local search service
 
-Use the companion `scala-testing-lab` version containing `serve-products` and explicit product bindings, and the same PostgreSQL configuration used for resolution. In that repository, run once per editor session:
+Use the companion `scala-testing-lab` version that supports `serve-products` and the `display` field in explicit bindings, and the same PostgreSQL configuration used for resolution. In that repository, run once per editor session:
 
 ```sh
 sbt "run serve-products 8765"
@@ -44,20 +44,28 @@ Reload the extension development host to use the new bundle.
 
 ## Select and preserve a product
 
-1. Type `medication aspi`. After at least two characters, the editor waits briefly and queries matching imported product names and synonyms.
-2. Inspect the product name and RxCUI in the suggestion list. Use the arrow keys to select the intended product, then **Tab** to accept it. **Ctrl+Space** opens suggestions manually.
-3. Completion inserts the `rxcui` and `rxnormRelease` fields together. For a new declaration it creates a readable identifier; selecting a product for an existing colon declaration preserves its alias and existing Plan references.
-4. Enter the administered `dose`, `route`, and `frequency`. Existing fields and comments are retained. Existing `strength` and `doseForm` are not silently overwritten.
-5. Save and run terminology resolution. Preview JSON contains the stored `productBinding` and, after successful validation, Scala's `selectedProduct`.
+Type a product prefix where you want a medication declaration. Two characters start the search. Choose the intended product in the list and press **Tab**. **Ctrl+Space** opens the list manually. The search works with prefixes of other product names and imported synonyms too.
 
-To select or change a product while keeping an arbitrary alias such as `MorningMedication`, type a search prefix inside the RxCUI quotes, for example `rxcui "aspi"`, then choose a product with Tab. Completion replaces the search text with its numeric RxCUI and updates the release together. Until a product is chosen, the nonnumeric search text is an incomplete binding and cannot be exported. The editor's automatic closing quotes keep the value ready for suggestions; Ctrl+Space also works.
+These three inputs show where to type. The examples use a synthetic catalog that returns `aspirin synthetic product` with RxCUI `900001`.
 
-The following is a **synthetic syntax example**. `900001` is a fixture identifier, not a verified real product to select:
+| What you type | What appears after you accept the product |
+| --- | --- |
+| `aspi` on a new declaration line | `Medication aspirin: product "aspirin synthetic product" rxcui "900001"` |
+| `Medication aspi` | `Medication aspirin: product "aspirin synthetic product" rxcui "900001"` |
+| `Medication MorningMedication: aspi` | `Medication MorningMedication: product "aspirin synthetic product" rxcui "900001"` |
+
+A new medication gets a readable alias, made unique if needed. To change the product for an existing alias, type a prefix before its existing fields, for example `Medication MorningMedication: aspi product "Old label" rxcui "900002"`. With the cursor after `aspi`, choose the new product and press Tab. The editor replaces the previous name and RxCUI together and preserves Plan references.
+
+The bare shortcut takes a single word. For a longer phrase with spaces or punctuation, type inside a quoted product value, for example `product "aspirin 81"`. Typing inside `rxcui "aspi"` also works.
+
+Enter the administered `dose`, `route`, and `frequency`, then save and run terminology resolution. Existing fields and comments are retained. An unaccepted search prefix is temporary editing text. Only a selected product supplies an exact RxCUI binding.
+
+A complete plan using the same synthetic product looks like this:
 
 ```text
 Patient DemoPatient: age 30, condition DemoCondition
-Medication DemoProduct: rxcui "900001" rxnormRelease "2026-10-05" dose 10mg route PO frequency BID
-Plan DemoPlan: prescribe DemoProduct for DemoPatient
+Medication MorningMedication: product "aspirin synthetic product" rxcui "900001" dose 10mg route PO frequency BID
+Plan DemoPlan: prescribe MorningMedication for DemoPatient
 show DemoPlan
 ```
 
@@ -69,9 +77,9 @@ Tab uses VS Code's normal acceptance of the selected suggestion. It is not globa
 
 | Situation | Result |
 | --- | --- |
-| Save, close, and reopen | The same RxCUI and release remain in the DSL text. |
+| Save, close, and reopen | The full product name and RxCUI remain visible in the DSL. |
 | Rename the local alias | The binding is unchanged; update Plan references as for any declaration rename. |
-| Change the configured release | The saved binding is not silently migrated. Choose a product from the new release before resolution. |
+| Change the configured release | Resolution checks the saved RxCUI and exact product label in the configured release. If a label changes, choose the product again to accept its current name. |
 | RxCUI absent from the imported release | Resolution reports that the selected product was not found. It does not fall back to the alias. |
 | RxCUI identifies an ingredient or another unsupported type | Resolution rejects it as an explicit product. |
 | Existing strength/form conflict with the selected product | Validation returns a conflict or clarification result, rather than selecting another product. |
@@ -83,17 +91,18 @@ Explicit binding can identify a combination product. If manual strength/form qua
 
 Typing updates Langium locally. Product completion separately sends only the prefix, release, and result limit to the local service. A 200 ms debounce, bounded expiring cache, request timeout, cancellation, and document-version checks prevent older search results from replacing newer text. These are implementation settings, not a measured latency guarantee.
 
-The search response is a candidate list. Acceptance writes a binding into the user's source; it does not run the final resolver. Existing save/manual resolution uses the current document and verifies that the returned selected product has exactly the stored ID and release.
+The search response is a candidate list. Acceptance writes a binding into the user's source; it does not run the final resolver. Existing save/manual resolution uses the current document and verifies that the returned product matches the ID, saved display name and configured release. Older files containing `rxnormRelease` retain their original release check until the user selects a product again.
 
 ```json
 {
   "productBinding": {
     "rxcui": "900001",
+    "display": "aspirin synthetic product",
     "release": "2026-10-05"
   }
 }
 ```
 
-This optional object appears in the medication preview and each corresponding exported mention. Requests with at least one binding use `schemaVersion: "2"` and `policyVersion: "explicit-product-v1"`. Documents without bindings keep `schemaVersion: "1"` and `policyVersion: "exact-v1"`. The Scala report remains schema `2` and echoes the binding with the mention. Both repository changes are required for bound documents.
+The example shows the exported mention. The source preview shows the RxCUI and display name as written. Export supplies the configured release and the report records the release used for verification. Requests with at least one binding use `schemaVersion: "2"` and `policyVersion: "explicit-product-v1"`. Documents without bindings keep `schemaVersion: "1"` and `policyVersion: "exact-v1"`. The Scala report remains schema `2` and echoes the binding with the mention. Both repository changes are required for bound documents.
 
-The product label is display text. `Medication.name` remains a DSL identifier and is the target of `Plan.prescribe`; it is not replaced by an entire multiword RxNorm label. Patient syntax and the existing named Plan relationships are unchanged.
+The `product` field holds the full display text. `Medication.name` supplies the identifier referenced by `Plan.prescribe`. Patient syntax and the existing named Plan relationships are unchanged.

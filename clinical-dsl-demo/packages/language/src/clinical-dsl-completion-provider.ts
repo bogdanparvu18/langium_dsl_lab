@@ -12,6 +12,7 @@ import { isMedication, isPlan } from './generated/ast.js';
 import { CancellationTokenSource, CompletionItemKind, type CancellationToken, type CompletionParams, type CompletionList, type Connection, type InitializeParams } from 'vscode-languageserver';
 import { RxNormProductSearch, searchOptions } from './rxnorm-product-search.js';
 import { productCompletion } from './rxnorm-product-completion.js';
+import { findProductTarget } from './rxnorm-completion-target.js';
 
 /** Fictional items for testing the editor, NOT a clinical formulary. */
 const MEDICATION_CATALOG: ReadonlyArray<{
@@ -26,6 +27,7 @@ const MEDICATION_CATALOG: ReadonlyArray<{
 /** Adds name suggestions, preserving Langium keyword/reference completion. */
 export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
     private readonly productSearch = new RxNormProductSearch();
+    private readonly parsers: LangiumServices['parser'];
     private readonly connection?: Connection;
     private readonly documents;
     private rxnormOptions: unknown;
@@ -37,6 +39,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
 
     constructor(services: LangiumServices) {
         super(services);
+        this.parsers = services.parser;
         this.connection = services.shared.lsp.Connection;
         this.documents = services.shared.workspace.LangiumDocuments;
         this.connection?.onNotification('clinical-dsl/configureRxNormSearch', options => this.configureRxNorm(options));
@@ -76,20 +79,15 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
             this.configurationEpoch === epoch && document.textDocument.version === version &&
             (this.documents.getDocument(document.uri)?.textDocument.version ?? version) === version;
         try {
-            const result = await this.getSyntaxCompletion(document, params, cancellation.token);
-            if (!result || !current()) return undefined;
+            const syntax = await this.getSyntaxCompletion(document, params, cancellation.token);
+            if (!current()) return undefined;
             const offset = document.textDocument.offsetAt(params.position);
-            const medication = AstUtils.streamContents(document.parseResult.value).filter(isMedication).find(node => {
-                const name = node.$cstNode && GrammarUtils.findNodesForProperty(node.$cstNode, 'name')[0];
-                const binding = node.$cstNode && GrammarUtils.findNodesForProperty(node.$cstNode, 'rxcui')[0];
-                return (name && name.offset <= offset && offset <= name.end) ||
-                    (binding && binding.offset < offset && offset < binding.end);
-            });
-            if (!medication?.$cstNode) return result;
-            const name = GrammarUtils.findNodesForProperty(medication.$cstNode, 'name')[0];
-            if (!name || typeof medication.name !== 'string') return result;
-            const bindingValue = GrammarUtils.findNodesForProperty(medication.$cstNode, 'rxcui').find(node => node.offset < offset && offset < node.end);
-            const prefix = document.textDocument.getText().slice(bindingValue ? bindingValue.offset + 1 : name.offset, offset);
+            const text = document.textDocument.getText();
+            const target = findProductTarget(text, offset, document.parseResult.value, this.parsers);
+            if (!target) return syntax;
+            const result = syntax ?? { isIncomplete: true, items: [] };
+            const quoted = target.kind === 'rxcui' || target.kind === 'product';
+            const prefix = text.slice(target.start + (quoted ? 1 : 0), offset);
             // Re-request as a prefix grows, including after an empty/too-short result.
             result.isIncomplete = true;
             if (prefix.length < 2) return result;
@@ -119,7 +117,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
             const products = await this.productSearch.search(prefix, options, cancellation.token);
             if (!current()) return undefined;
             const items = products.items.flatMap((product, index) => {
-                const item = productCompletion(document, medication, name, product, prefix, index, bindingValue);
+                const item = productCompletion(document, target, product, prefix, index);
                 return item ? [item] : [];
             });
             return { ...result, items: [...items, ...result.items] };
@@ -177,6 +175,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
         next: NextFeature,
         acceptor: CompletionAcceptor
     ): MaybePromise<void> {
+        if (GrammarAST.isKeyword(next.feature) && next.feature.value === 'rxnormRelease') return;
         const assignment = AstUtils.getContainerOfType(
             next.feature, GrammarAST.isAssignment
         );
@@ -271,7 +270,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
 
 const FIELD_KEYWORDS = new Map([
     ['dose', 'amount'], ['route', 'route'], ['frequency', 'frequency'],
-    ['strength', 'productStrength'], ['doseForm', 'doseForm'], ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease'],
+    ['strength', 'productStrength'], ['doseForm', 'doseForm'], ['product', 'productName'], ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease'],
     ['for', 'patient'], ['prescribe', 'medication']
 ]);
 const RULE_FIELDS = new Map([

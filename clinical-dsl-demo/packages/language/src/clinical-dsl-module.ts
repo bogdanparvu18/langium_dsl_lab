@@ -1,6 +1,6 @@
 import { type Module, inject } from 'langium';
 import { ClinicalDslValueConverter } from './clinical-dsl-value-converter.js';
-import { ClinicalDslTokenBuilder } from './clinical-dsl-token-builder.js';
+import { ClinicalDslLexer, ClinicalDslTokenBuilder } from './clinical-dsl-token-builder.js';
 import { ClinicalDslScopeProvider } from './clinical-dsl-scope-provider.js';
 import { ClinicalDslLinker } from './clinical-dsl-linker.js';
 import { ClinicalDslDocumentBuilder } from './clinical-dsl-document-builder.js';
@@ -41,7 +41,8 @@ export const ClinicalDslModule:
     > = {
         parser: {
             ValueConverter: () => new ClinicalDslValueConverter(),
-            TokenBuilder: () => new ClinicalDslTokenBuilder()
+            TokenBuilder: () => new ClinicalDslTokenBuilder(),
+            Lexer: services => new ClinicalDslLexer(services)
         },
         references: {
             ScopeProvider: services => new ClinicalDslScopeProvider(services),

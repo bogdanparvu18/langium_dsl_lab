@@ -45,7 +45,13 @@ async function harness(options = {}) {
     await writeFile(path.join(toolsRoot, 'layout.json'), JSON.stringify(layout));
     const uri = fileUri(path.join(langiumRoot, 'new.clinical'));
     const medicationName = options.medicationName ?? 'paracetamol';
-    const text = `medication ${medicationName} { 1 mg route PO frequency PRN }`;
+    const binding = options.binding;
+    const fields = binding ? [
+        `rxcui ${JSON.stringify(binding.rxcui)}`,
+        ...(binding.display !== undefined ? [`product ${JSON.stringify(binding.display)}`] : []),
+        ...(binding.release !== undefined ? [`rxnormRelease ${JSON.stringify(binding.release)}`] : [])
+    ] : [];
+    const text = `medication ${medicationName}: ${[...fields, '1 mg route PO frequency PRN'].join(' ')}`;
     const document = { uri, version: 1, isDirty: false, isClosed: false,
         languageId: 'clinical-dsl', getText() { return this.text; }, text };
     await writeFile(uri.fsPath, text);
@@ -75,9 +81,11 @@ async function harness(options = {}) {
                     if (options.exportFails) { child.stderr.write('Invalid DSL / unresolved plan reference'); child.emit('close', 1); return; }
                     const input = args[args.indexOf('--input') + 1];
                     const documentText = await readFile(input, 'utf8');
+                    const exportedBinding = Object.hasOwn(options, 'exportBinding') ? options.exportBinding :
+                        binding && { ...binding, release: binding.release ?? configValues.release };
                     const mention = { id: `DemoPlan:${medicationName}`, orderId: 'DemoPlan', originalText: medicationName, role: 'medication',
                         ...(options.product ? { productStrength: '500 mg', doseForm: 'Oral Tablet' } : {}),
-                        ...(options.binding ? { productBinding: options.binding } : {}),
+                        ...(exportedBinding ? { productBinding: exportedBinding } : {}),
                         source: { uri: uri.toString(), start: { line: 0, character: 0, offset: 0 },
                             end: { line: 0, character: text.length, offset: text.length }, text } };
                     await writeFile(args[args.indexOf('--output') + 1], JSON.stringify({
@@ -99,7 +107,8 @@ async function harness(options = {}) {
                             initialConcept: resolved ? { rxcui: '161', display: 'acetaminophen', tty: 'IN' } : null,
                             ...((options.product || options.binding) && resolved && !options.missingSelectedProduct ? { selectedProduct: {
                                 rxcui: options.wrongProductId ? '900002' : options.binding?.rxcui ?? '900001',
-                                display: 'synthetic 500 MG Oral Tablet', tty: options.wrongProductType ? 'IN' : 'SCD',
+                                display: options.selectedDisplay ?? binding?.display ?? 'synthetic 500 MG Oral Tablet',
+                                tty: options.wrongProductType ? 'IN' : 'SCD',
                                 release: options.wrongProductRelease ? '2026-11-02' : '2026-10-05' },
                                 productEvidence: { strength: { value: '500 MG', atui: 'synthetic-attribute' } } } : {}),
                             ingredients: [], diagnostics: [], candidates: [] }] }));
@@ -155,7 +164,7 @@ async function harness(options = {}) {
         asAbsolutePath: file => path.join(langiumRoot, 'packages/extension', file),
         secrets: { get: async () => 'private-test-password', store: async (...args) => savedSecrets.push(args) } };
     const module = { exports: {} };
-    vm.runInNewContext(bundle, { module, exports: module.exports, Buffer, process, setTimeout, clearTimeout,
+    vm.runInNewContext(bundle, { module, exports: module.exports, Buffer, process, setTimeout, clearTimeout, URL, TextEncoder, TextDecoder,
         require: name => name === 'vscode' ? vscode : name === 'node:child_process' ? { spawn } : require(name) });
     const rxnorm = module.exports.registerRxNorm(context);
     const planJson = JSON.stringify({ name: 'DemoPlan', patient: { name: 'DemoPatient' },
@@ -469,3 +478,43 @@ for (const option of ['wrongProductId', 'wrongProductRelease', 'wrongProductType
         assert.equal(preview(h).medication.rxnorm.status, 'unavailable');
     });
 }
+
+test('a named product uses the configured release while the plan preserves only its visible name and code', async t => {
+    const binding = { rxcui: '900001', display: 'Synthetic 500 MG Oral Tablet' };
+    const h = await harness({ medicationName: 'MorningMedication', binding }); t.after(() => h.cleanup());
+    await h.resolve();
+    const result = preview(h).medication;
+    assert.equal(result.name, 'MorningMedication');
+    assert.deepEqual(result.productBinding, binding);
+    assert.deepEqual(result.rxnorm.selectedProduct,
+        { rxcui: binding.rxcui, display: binding.display, tty: 'SCD', release: '2026-10-05' });
+    const changed = JSON.parse(h.planJson);
+    changed.medication.productBinding.display = 'Another name';
+    assert.throws(() => withRxNormPreview(JSON.stringify(changed), h.rxnorm.getPreview(h.document, 'DemoPlan')), /does not belong/);
+});
+
+test('a report must echo the visible product name and resolve that exact name', async t => {
+    const binding = { rxcui: '900001', display: 'Synthetic 500 MG Oral Tablet' };
+    for (const [options, expected] of [
+        [{ reportBinding: { rxcui: binding.rxcui, release: '2026-10-05' } }, /inconsistent resolution report/],
+        [{ selectedDisplay: binding.display.toLowerCase() }, /different product or release/]
+    ]) {
+        const h = await harness({ binding, ...options }); t.after(() => h.cleanup());
+        await h.resolve();
+        assert.equal(h.entries.size, 0);
+        assert.match(h.notices.at(-1).message, expected);
+        assert.equal(preview(h).medication.rxnorm.status, 'unavailable');
+    }
+});
+
+test('an older exporter cannot silently downgrade a visible product selection', async t => {
+    const binding = { rxcui: '900001', display: 'Synthetic 500 MG Oral Tablet' };
+    for (const exportBinding of [undefined, { rxcui: binding.rxcui, release: '2026-10-05' }]) {
+        const h = await harness({ binding, exportBinding }); t.after(() => h.cleanup());
+        await h.resolve();
+        assert.equal(h.processes.length, 1);
+        assert.equal(h.entries.size, 0);
+        assert.match(h.notices.at(-1).message, /exporter/i);
+        assert.equal(preview(h).medication.rxnorm.status, 'unavailable');
+    }
+});

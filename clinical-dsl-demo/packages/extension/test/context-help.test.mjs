@@ -130,16 +130,44 @@ test('help tolerates incomplete declarations without leaking parser exceptions',
 
 test('binding help explains the missing counterpart and shows a concrete syntax example', async () => {
   const prefix = 'Medication DemoMed: dose 10mg route PO frequency BID ';
+  for (const unfinished of ['rxcui "aspi"', 'product']) {
+    const message = (await help(prefix + unfinished)).message;
+    assert.match(message, /Missing or incomplete: product .*rxcui/);
+    assert.match(message, /Tab/);
+    assert.match(message, /Medication DemoMed: aspi/);
+    assert.doesNotMatch(message, /rxnormRelease/);
+  }
   const withId = (await help(prefix + 'rxcui "900001"')).message;
-  assert.match(withId, /rxnormRelease \(required with rxcui\)/);
-  assert.match(withId, /rxnormRelease "2026-10-05"/);
-  const withRelease = (await help(prefix + 'rxnormRelease "2026-10-05"')).message;
-  assert.match(withRelease, /rxcui \(required with rxnormRelease\)/);
-  assert.match(withRelease, /rxcui "900001"/);
-  assert.match(withRelease, /fictional/);
-  const source = prefix + 'rxcui "900001" rxnormRelease "2026-10-05"';
-  const complete = (await help(source, undefined, false, source.indexOf('rxcui') + 'rxcui'.length)).message;
-  assert.match(complete, /Required medication fields are present/);
-  assert.match(complete, /Explicit product binding example/);
-  assert.doesNotMatch(complete, /Missing or incomplete/);
+  assert.match(withId, /product \(full RxNorm product name\)/);
+  assert.match(withId, /product "Demo tablet" rxcui "900001"/);
+  assert.doesNotMatch(withId, /rxnormRelease/);
+  for (const orphan of ['product "Demo tablet"', 'rxnormRelease "2026-10-05"']) {
+    const message = (await help(prefix + orphan)).message;
+    assert.match(message, /rxcui \(selected product ID\)/);
+    assert.match(message, /product "Demo tablet" rxcui "900001"/);
+    assert.match(message, /fictional/);
+  }
+  for (const binding of ['rxcui "900001" product "Demo tablet"', 'rxcui "900001" rxnormRelease "2026-10-05"']) {
+    const source = prefix + binding;
+    const complete = (await help(source, undefined, false, source.indexOf('rxcui') + 'rxcui'.length)).message;
+    assert.match(complete, /Required medication fields are present/);
+    assert.match(complete, /Tab/);
+    assert.doesNotMatch(complete, /Missing or incomplete|rxnormRelease/);
+  }
+});
+
+test('help shows how a bare prefix becomes a concrete product selection', async () => {
+  for (const source of ['aspi', 'Patient DemoPatient: age 30, condition DemoCondition\naspi']) {
+    const { message, commands } = await help(source, 'Show suggestions');
+    assert.match(message, /on its own line, for example aspi/);
+    assert.match(message, /press Tab/);
+    assert.match(message, /Medication Demo: product "Demo tablet" rxcui "900001"/);
+    assert.deepEqual(commands, ['editor.action.triggerSuggest']);
+  }
+  const source = 'Medication MorningMedication: aspi dose 10mg route PO frequency BID';
+  const { message } = await help(source, undefined, false, source.indexOf('aspi') + 4);
+  assert.match(message, /Medication MorningMedication: aspi/);
+  assert.match(message, /product "Demo tablet" rxcui "900001"/);
+  assert.match(message, /Missing or incomplete: product .*rxcui/);
+  assert.doesNotMatch(message, /Missing or incomplete: dose/);
 });

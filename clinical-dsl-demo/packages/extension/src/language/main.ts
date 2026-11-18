@@ -47,8 +47,12 @@ function projectPlan(statement: DisplayPlan) {
             dose: { amount, unit: medication.unit },
             ...(medication.productStrength !== undefined ? { productStrength: medication.productStrength } : {}),
             ...(medication.doseForm !== undefined ? { doseForm: medication.doseForm } : {}),
-            ...(medication.rxcui !== undefined && medication.rxnormRelease !== undefined ? {
-                productBinding: { rxcui: medication.rxcui, release: medication.rxnormRelease }
+            ...(medication.rxcui !== undefined ? {
+                productBinding: {
+                    rxcui: medication.rxcui,
+                    ...(medication.productName !== undefined ? { display: medication.productName } : {}),
+                    ...(medication.rxnormRelease !== undefined ? { release: medication.rxnormRelease } : {})
+                }
             } : {}),
             // Compatible with both the original grammar and the route/frequency patch.
             ...('route' in medication && typeof medication.route === 'string'
