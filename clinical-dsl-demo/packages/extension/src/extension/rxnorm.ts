@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { parseClinicalDocument } from './context-help.js';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -10,7 +11,7 @@ const PASSWORD = 'clinical-dsl.rxnorm.setPassword';
 
 interface Position { line: number; character: number; offset: number }
 interface Concept { rxcui: string; display: string; tty: string; release?: string }
-interface ProductBinding { rxcui: string; release: string }
+interface ProductBinding { rxcui: string; display?: string; release: string }
 interface Mention {
     id: string;
     orderId: string;
@@ -81,6 +82,21 @@ function parseJson<T>(text: string): T {
     return JSON.parse(text.replace(/^\uFEFF/, '')) as T;
 }
 
+/** The bridge is installed separately. Check the saved DSL before accepting its bindings. */
+function checkExportBindings(request: Request, release: string): void {
+    const model = parseClinicalDocument(request.document.text);
+    const declarations = new Map(model.medication.map(medication => [medication.$cstNode?.offset, medication]));
+    for (const mention of request.mentions) {
+        const medication = declarations.get(mention.source.start.offset);
+        const binding = mention.productBinding;
+        if (!medication || medication.name !== mention.originalText ||
+            medication.rxcui !== binding?.rxcui || medication.productName !== binding?.display ||
+            (binding && binding.release !== (medication.rxnormRelease ?? release))) {
+            throw new Error('The RxNorm exporter did not preserve the medication selection. Update the Scala bridge and retry.');
+        }
+    }
+}
+
 function checkReport(text: string, request: Request, release: string): Report {
     const report = parseJson<Report>(text);
     if (report.schemaVersion !== '2' || report.terminologyRelease !== release ||
@@ -97,6 +113,7 @@ function checkReport(text: string, request: Request, release: string): Report {
             result.mention.productStrength !== expected.productStrength || result.mention.doseForm !== expected.doseForm ||
             result.mention.productBinding?.rxcui !== expected.productBinding?.rxcui ||
             result.mention.productBinding?.release !== expected.productBinding?.release ||
+            result.mention.productBinding?.display !== expected.productBinding?.display ||
             !['resolved', 'unresolved', 'productNotFound', 'needsClarification', 'invalidRole'].includes(result.status) ||
             !Array.isArray(result.ingredients) || !Array.isArray(result.diagnostics)) {
             throw new Error('Scala returned an inconsistent resolution report.');
@@ -110,6 +127,7 @@ function checkReport(text: string, request: Request, release: string): Report {
             (expected.productBinding.release !== release ||
              result.selectedProduct?.rxcui !== expected.productBinding.rxcui ||
              result.selectedProduct.release !== expected.productBinding.release ||
+             (expected.productBinding.display !== undefined && result.selectedProduct.display !== expected.productBinding.display) ||
              !['SCD', 'SBD'].includes(result.selectedProduct.tty))) {
             throw new Error('Scala returned a different product or release from the explicit RxCUI selection.');
         }
@@ -225,6 +243,7 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                         vscode.Uri.parse(request.document.uri).toString() !== document.uri.toString()) {
                         throw new Error('The source file changed during AST export. Save it and run again.');
                     }
+                    checkExportBindings(request, release);
                     const conflictingBinding = request.mentions.find(mention =>
                         mention.productBinding && mention.productBinding.release !== release);
                     if (conflictingBinding?.productBinding) {

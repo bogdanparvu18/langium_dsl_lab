@@ -177,6 +177,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
         next: NextFeature,
         acceptor: CompletionAcceptor
     ): MaybePromise<void> {
+        if (GrammarAST.isKeyword(next.feature) && next.feature.value === 'rxnormRelease') return;
         const assignment = AstUtils.getContainerOfType(
             next.feature, GrammarAST.isAssignment
         );
@@ -271,7 +272,7 @@ export class ClinicalDslCompletionProvider extends DefaultCompletionProvider {
 
 const FIELD_KEYWORDS = new Map([
     ['dose', 'amount'], ['route', 'route'], ['frequency', 'frequency'],
-    ['strength', 'productStrength'], ['doseForm', 'doseForm'], ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease'],
+    ['strength', 'productStrength'], ['doseForm', 'doseForm'], ['product', 'productName'], ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease'],
     ['for', 'patient'], ['prescribe', 'medication']
 ]);
 const RULE_FIELDS = new Map([

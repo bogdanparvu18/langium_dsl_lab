@@ -208,8 +208,16 @@ show DemoPlan`;
     assert.equal(medication.name, 'ChosenProduct');
     assert.deepEqual(medication.dose, { amount: 10, unit: 'mg' });
 
-    await server.update(uri, text.replace('RXNORMRELEASE "2026-10-05" ', ''), 2);
-    const invalid = await server.preview(uri, 2);
+    const namedProduct = text.replace('RXNORMRELEASE "2026-10-05"', 'product "Synthetic 10 MG Oral Tablet"');
+    await server.update(uri, namedProduct, 2);
+    const named = await server.preview(uri, 2);
+    assert.equal(named.items[0].error, undefined);
+    const namedMedication = JSON.parse(named.items[0].json).medication;
+    assert.equal(namedMedication.name, 'ChosenProduct');
+    assert.deepEqual(namedMedication.productBinding, { rxcui: '900001', display: 'Synthetic 10 MG Oral Tablet' });
+
+    await server.update(uri, text.replace('RXNORMRELEASE "2026-10-05" ', ''), 3);
+    const invalid = await server.preview(uri, 3);
     assert.equal(invalid.items[0].json, undefined);
-    assert.match(invalid.items[0].error, /requires rxnormRelease/);
+    assert.match(invalid.items[0].error, /requires a product name/i);
 });

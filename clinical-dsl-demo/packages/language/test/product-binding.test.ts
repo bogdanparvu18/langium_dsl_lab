@@ -16,10 +16,56 @@ function errors(doc: Awaited<ReturnType<typeof read>>) {
 
 describe('explicit RxNorm product identity', () => {
     test.each([
+        `product "Demo tablet" rxcui "900001" ${required}`,
+        `frequency bid RxCuI '900001', dose 10 MG, PrOdUcT 'Demo tablet' ROUTE po`,
+        `rxcui "900001" ${required} PRODUCT "Demo tablet" rxnormRelease "2026-10-05"`
+    ])('binds the visible name and exact RxCUI: %s', async fields => {
+        const doc = await read(`Medication MorningMedication: ${fields}`);
+        expect(errors(doc)).toEqual([]);
+        expect(doc.parseResult.value.medication[0]).toMatchObject({
+            name: 'MorningMedication', productName: 'Demo tablet', rxcui: '900001'
+        });
+    });
+
+    test('preserves spelling, punctuation, whitespace and escapes in the returned display', async () => {
+        const display = 'Démø  "A" \\ B /* name */ // 2.5 MG/mL [Brand]';
+        const doc = await read(`Medication Alias: product ${JSON.stringify(display)} rxcui "900001" ${required}`);
+        expect(errors(doc)).toEqual([]);
+        expect(doc.parseResult.value.medication[0].productName).toBe(display);
+        expect(doc.parseResult.value.medication[0].rxnormRelease).toBeUndefined();
+    });
+
+    test.each(['Oral Tablet', 'Demo Product Spray', 'Demo Product'])(
+        'distinguishes the unquoted dose form %s from the next product field', async form => {
+            const doc = await read(`Medication Alias: strength 5mg doseForm ${form} product "Demo tablet" rxcui "900001" ${required}`);
+            expect(errors(doc)).toEqual([]);
+            expect(doc.parseResult.value.medication[0]).toMatchObject({ doseForm: form, productName: 'Demo tablet' });
+        }
+    );
+
+    test('ignores comments between a product keyword and its quoted value', async () => {
+        const doc = await read(`Medication Alias: strength 5mg doseForm Demo Product /* form word */ Spray
+            product /* "ignored" */ // 'ignored'
+            "Demo tablet" rxcui "900001" ${required}`);
+        expect(errors(doc)).toEqual([]);
+        expect(doc.parseResult.value.medication[0]).toMatchObject({ doseForm: 'Demo Product Spray', productName: 'Demo tablet' });
+    });
+
+    test('preserves Product as a declaration name, patient condition and Plan reference', async () => {
+        const doc = await read(`Patient Product: age 45, condition PrOdUct
+Medication MorningMedication: ${required} product "Demo tablet" rxcui "900001"
+Plan P: prescribe MorningMedication for Product`);
+        expect(errors(doc)).toEqual([]);
+        expect(doc.parseResult.value.patient[0]).toMatchObject({ name: 'Product', condition: 'PrOdUct' });
+        expect(doc.parseResult.value.plan[0].medication.ref).toBe(doc.parseResult.value.medication[0]);
+        expect(doc.parseResult.value.plan[0].patient.ref).toBe(doc.parseResult.value.patient[0]);
+    });
+
+    test.each([
         `rxcui "900001" rxnormRelease "2026-10-05" ${required}`,
         `FREQUENCY bid RXNORMRELEASE "2026-10-05" dose 10 MG RxCuI "900001" ROUTE po`,
         `route PO, rxcui '900001', dose 10mg, frequency BID, rxnormRelease '2026-10-05'`
-    ])('accepts mixed casing and any binding field order: %s', async fields => {
+    ])('reads legacy release-pinned bindings in any order: %s', async fields => {
         const doc = await read(`Medication MyChosenProduct: ${fields}`);
         expect(doc.parseResult.lexerErrors).toEqual([]);
         expect(doc.parseResult.parserErrors).toEqual([]);
@@ -42,8 +88,11 @@ show P`);
     });
 
     test.each([
-        ['rxcui "900001"', /requires rxnormRelease/],
-        ['rxnormRelease "2026-10-05"', /requires a selected product RxCUI/],
+        ['rxcui "900001"', /requires a product name/],
+        ['rxnormRelease "2026-10-05"', /supply its RxCUI/],
+        ['product "Demo tablet"', /supply its RxCUI/],
+        ['product "   " rxcui "900001"', /name cannot be blank/],
+        ['product "Demo tablet" rxcui "aspi"', /quoted positive digit string/],
         ['rxcui "" rxnormRelease "2026-10-05"', /quoted positive digit string/],
         ['rxcui "0" rxnormRelease "2026-10-05"', /quoted positive digit string/],
         ['rxcui "00900001" rxnormRelease "2026-10-05"', /quoted positive digit string/],
@@ -59,6 +108,7 @@ show P`);
     });
 
     test.each([
+        ['product "Demo tablet" rxcui "900001" PRODUCT "Another product"', /Duplicate product/],
         ['rxcui "900001" rxcui "900002" rxnormRelease "2026-10-05"', /Duplicate rxcui/],
         ['rxnormRelease "2026-10-05" rxcui "900001" RXNORMRELEASE "2026-11-02"', /Duplicate rxnormRelease/]
     ] as const)('rejects a repeated binding field: %s', async (binding, message) => {

@@ -16,10 +16,11 @@ export function withRxNormPreview(json: string, state: RxNormPreviewState): stri
             break;
         case 'complete': {
             const { report, resolution } = state;
-            const binding = plan.medication.productBinding as { rxcui?: string; release?: string } | undefined;
+            const binding = plan.medication.productBinding as { rxcui: string; display?: string; release?: string } | undefined;
+            const verifiedBinding = resolution.mention.productBinding;
             if (resolution.mention.orderId !== plan.name || resolution.mention.originalText !== plan.medication.name ||
-                binding?.rxcui !== resolution.mention.productBinding?.rxcui ||
-                binding?.release !== resolution.mention.productBinding?.release) {
+                binding?.rxcui !== verifiedBinding?.rxcui || binding?.display !== verifiedBinding?.display ||
+                (binding?.release !== undefined && binding.release !== verifiedBinding?.release)) {
                 throw new Error('The RxNorm result does not belong to the previewed plan and medication.');
             }
             const metadata = {

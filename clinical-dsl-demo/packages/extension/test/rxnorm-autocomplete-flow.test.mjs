@@ -11,7 +11,8 @@ import { createMessageConnection, IPCMessageReader, IPCMessageWriter } from 'vsc
 
 // Synthetic catalog data: these identifiers are test fixtures, not RxNorm claims.
 const release = '2026-10-05';
-const product = { rxcui: '900001', display: 'aspirin synthetic product', tty: 'SCD', release };
+const product = { rxcui: '900001', display: 'aspirin 81 MG Oral Tablet [Synthetic "A"]', tty: 'SCD', release };
+const visibleBinding = { rxcui: product.rxcui, display: product.display };
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'clinical-autocomplete-flow-'));
 const serverFile = path.join(temporary, 'server.cjs');
@@ -124,7 +125,8 @@ test('typing a prefix, accepting its edits and reopening preserves exact product
     await server.update(uri, draft);
     const completed = applyCompletion(draft, selected(await server.complete(uri, draft)));
     assert.match(completed, /rxcui\s+"900001"/);
-    assert.match(completed, /rxnormRelease\s+"2026-10-05"/);
+    assert.ok(completed.includes(JSON.stringify(product.display)), 'The full catalog label should be readable in the source');
+    assert.doesNotMatch(completed, /\brxnormRelease\b/i);
     assert.doesNotMatch(completed, /\b(?:dose|route|frequency)\b/i, 'Product choice must not invent administration details');
     const alias = /^medication\s+(\w+)/i.exec(completed)[1];
     const text = `Patient Alice: age 45, condition Fever\n${completed} dose 10mg route PO frequency BID\nPlan DemoPlan: for Alice prescribe ${alias}\nshow DemoPlan`;
@@ -132,7 +134,7 @@ test('typing a prefix, accepting its edits and reopening preserves exact product
     const preview = await server.preview(uri, 2);
     assert.equal(preview.items[0].error, undefined);
     const medication = JSON.parse(preview.items[0].json).medication;
-    assert.deepEqual(medication.productBinding, { rxcui: product.rxcui, release });
+    assert.deepEqual(medication.productBinding, visibleBinding);
     assert.deepEqual(medication.dose, { amount: 10, unit: 'mg' });
     await server.connection.sendNotification('textDocument/didClose', { textDocument: { uri } });
     await server.update(uri, text);
@@ -148,20 +150,21 @@ test('selecting another product preserves the existing alias, Plan references an
     const backend = await catalog(t);
     const server = await languageServer(t, backend.url);
     const uri = 'file:///rxnorm-flow/reselect.clinical';
-    const text = `Patient Alice: age 45, condition Fever\nMedication aspiAlias: frequency BID rxcui "900002" route PO rxnormRelease "2026-10-05" dose 10mg\nPlan DemoPlan: for Alice prescribe aspiAlias\nshow DemoPlan`;
+    const text = `Patient Alice: age 45, condition Fever\nMedication aspiAlias: frequency BID rxcui "900002" route PO rxnormRelease /* keep this note */ "2025-01-01" dose 10mg\nPlan DemoPlan: for Alice prescribe aspiAlias\nshow DemoPlan`;
     await server.update(uri, text);
     const cursor = text.indexOf('aspiAlias') + 4;
     const changed = applyCompletion(text, selected(await server.complete(uri, text, cursor)));
     assert.match(changed, /Medication aspiAlias:/);
     assert.match(changed, /prescribe aspiAlias/);
     assert.equal((changed.match(/\brxcui\b/g) ?? []).length, 1);
-    assert.equal((changed.match(/\brxnormRelease\b/g) ?? []).length, 1);
+    assert.doesNotMatch(changed, /\brxnormRelease\b|2025-01-01/i);
+    assert.ok(changed.includes('/* keep this note */'));
     await server.update(uri, changed, 2);
     const preview = await server.preview(uri, 2);
     assert.equal(preview.items[0].error, undefined);
     const medication = JSON.parse(preview.items[0].json).medication;
     assert.equal(medication.name, 'aspiAlias');
-    assert.deepEqual(medication.productBinding, { rxcui: product.rxcui, release });
+    assert.deepEqual(medication.productBinding, visibleBinding);
     assert.deepEqual(medication.dose, { amount: 10, unit: 'mg' });
     assert.equal(medication.route, 'PO');
     assert.equal(medication.frequency, 'BID');
@@ -171,18 +174,26 @@ test('product search inside the RxCUI field works for an arbitrary existing alia
     const backend = await catalog(t);
     const server = await languageServer(t, backend.url);
     const uri = 'file:///rxnorm-flow/binding-field.clinical';
-    const text = `Patient Alice: age 45, condition Fever\nMedication MorningMed: dose 10mg rxcui "aspi" rxnormRelease "2025-01-01" route PO frequency BID\nPlan DemoPlan: prescribe MorningMed for Alice\nshow DemoPlan`;
-    await server.update(uri, text);
+    const draft = 'Medication MorningMedication: rxcui "aspi"';
+    await server.update(uri, draft);
+    const item = selected(await server.complete(uri, draft, draft.indexOf('aspi') + 4));
+    assert.equal(applyCompletion(draft, item),
+        `Medication MorningMedication: product ${JSON.stringify(product.display)} rxcui "${product.rxcui}"`);
+    const text = `Patient Alice: age 45, condition Fever\nMedication MorningMed: dose 10mg rxcui "aspi" product "Old catalog label" route PO frequency BID\nPlan DemoPlan: prescribe MorningMed for Alice\nshow DemoPlan`;
+    await server.update(uri, text, 2);
     const changed = applyCompletion(text, selected(await server.complete(uri, text, text.indexOf('aspi') + 4)));
     assert.match(changed, /Medication MorningMed:/);
     assert.match(changed, /prescribe MorningMed/);
-    assert.doesNotMatch(changed, /2025-01-01/);
-    await server.update(uri, changed, 2);
-    const preview = await server.preview(uri, 2);
+    assert.doesNotMatch(changed, /Old catalog label|\brxnormRelease\b/i);
+    assert.match(changed, /\brxcui\s+"900001"/i);
+    assert.ok(changed.includes(JSON.stringify(product.display)));
+    assert.equal((changed.match(/\bproduct\s+"/gi) ?? []).length, 1);
+    await server.update(uri, changed, 3);
+    const preview = await server.preview(uri, 3);
     assert.equal(preview.items[0].error, undefined);
     const medication = JSON.parse(preview.items[0].json).medication;
     assert.equal(medication.name, 'MorningMed');
-    assert.deepEqual(medication.productBinding, { rxcui: product.rxcui, release });
+    assert.deepEqual(medication.productBinding, visibleBinding);
     assert.deepEqual(medication.dose, { amount: 10, unit: 'mg' });
 });
 
@@ -250,7 +261,9 @@ test('a synonym hit remains visible even when the product display does not start
     const item = result?.items?.find(item => item.label.includes(synonymProduct.display));
     assert.ok(item, 'Backend synonym matches should remain suggestions');
     assert.match(item.filterText ?? item.label, /^aspi/i, 'VS Code filtering must retain the synonym result');
-    assert.match(applyCompletion(text, item), /rxcui\s+"900001"/);
+    const changed = applyCompletion(text, item);
+    assert.match(changed, /rxcui\s+"900001"/);
+    assert.ok(changed.includes(JSON.stringify(synonymProduct.display)));
 });
 
 test('autocomplete honors document-scoped RxNorm settings from the language client', { timeout: 10000 }, async t => {
@@ -327,7 +340,7 @@ test('bridge export retains a selected product after editor completion', { timeo
     const request = await exportDocument({ langiumRoot: root, input, release });
     assert.equal(request.schemaVersion, '2');
     assert.equal(request.policyVersion, 'explicit-product-v1');
-    assert.deepEqual(request.mentions[0].productBinding, { rxcui: product.rxcui, release });
+    assert.deepEqual(request.mentions[0].productBinding, { ...visibleBinding, release });
     assert.equal(request.mentions[0].originalText, alias);
     const source = request.mentions[0].source;
     assert.equal(text.slice(source.start.offset, source.end.offset), source.text);

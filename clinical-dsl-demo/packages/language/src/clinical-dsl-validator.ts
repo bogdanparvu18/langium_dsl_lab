@@ -20,7 +20,7 @@ export class ClinicalDslValidator {
         const fields = [
             ['amount', 'dose'], ['route', 'route'], ['frequency', 'frequency'],
             ['productStrength', 'strength'], ['doseForm', 'doseForm'],
-            ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease']
+            ['productName', 'product'], ['rxcui', 'rxcui'], ['rxnormRelease', 'rxnormRelease']
         ] as const;
         for (const [property, label] of fields) {
             const occurrences = GrammarUtils.findNodesForProperty(medication.$cstNode, property);
@@ -88,13 +88,20 @@ export class ClinicalDslValidator {
     }
 
     checkProductBinding(medication: Medication, accept: ValidationAcceptor): void {
-        const { rxcui, rxnormRelease } = medication;
-        if ((rxcui !== undefined) !== (rxnormRelease !== undefined)) {
-            accept('error', rxcui !== undefined
-                ? 'An explicit RxCUI requires rxnormRelease, for example rxnormRelease "2026-10-05".'
-                : 'An RxNorm release requires a selected product RxCUI, for example rxcui "900001" (syntax example only).', {
-                node: medication, property: rxcui !== undefined ? 'rxcui' : 'rxnormRelease'
+        const { productName, rxcui, rxnormRelease } = medication;
+        if (rxcui === undefined && (productName !== undefined || rxnormRelease !== undefined)) {
+            accept('error', 'Select a product to supply its RxCUI. Example: product "Demo tablet" rxcui "900001" (fictional).', {
+                node: medication, property: productName !== undefined ? 'productName' : 'rxnormRelease'
             });
+        }
+        // Previously saved files can identify a product by RxCUI and a pinned release alone.
+        if (rxcui !== undefined && productName === undefined && rxnormRelease === undefined) {
+            accept('error', 'A selected RxCUI requires a product name. Type rxcui "aspi" and accept a product with Tab.', {
+                node: medication, property: 'rxcui'
+            });
+        }
+        if (productName !== undefined && !productName.trim()) {
+            accept('error', 'The RxNorm product name cannot be blank.', { node: medication, property: 'productName' });
         }
         if (rxcui !== undefined && !/^[1-9][0-9]{0,19}$/.test(rxcui)) {
             accept('error', 'RxCUI must be a quoted positive digit string of at most 20 digits, for example rxcui "900001" (syntax example only).', {
