@@ -99,6 +99,56 @@ function apply(item: CompletionItem, document: Awaited<ReturnType<typeof complet
 }
 
 describe('product completion transactions', () => {
+    test.each([
+        ['aspi|', 'Medication Aspirin:'],
+        ['Medication MorningMedication: aspi|', 'Medication MorningMedication:']
+    ])('accepting a bare prefix in %s writes the exact catalog name and ID', async (draft, declaration) => {
+        const result = await complete(draft);
+        expect(result.item).toBeDefined();
+        const text = apply(result.item!, result.document);
+        expect(text).toBe(`${declaration} product "Aspirin fixture product" rxcui "900001"`);
+    });
+
+    test('a standalone prefix between declarations creates a collision-free medication and replaces the full word', async () => {
+        const prefix = 'Medication ASPIRIN: dose 1mg route PO frequency QD\nPatient Alice: age 45, condition Fever\n';
+        const suffix = '\nPlan MorningPlan: for Alice prescribe Aspirin_900001';
+        const result = await complete(prefix + 'aspi|rin' + suffix);
+        expect(result.item).toBeDefined();
+        const changed = apply(result.item!, result.document);
+        expect(changed).toBe(prefix + 'Medication Aspirin_900001: product "Aspirin fixture product" rxcui "900001"' + suffix);
+    });
+
+    test('bare lookup can select a mixed-case prefix after a completed administration field', async () => {
+        const met = { ...product, display: 'Metformin fixture tablet', rxcui: '900003' };
+        const result = await complete('Medication MorningMedication: dose 20mg, mEtF|ormin route IV frequency PRN',
+            async () => response('metf', { items: [met] }));
+        expect(result.item?.label).toBe(met.display);
+        const changed = apply(result.item!, result.document);
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(changed);
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication).toHaveLength(1);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({
+            name: 'MorningMedication', productName: met.display, rxcui: met.rxcui, amount: 20, unit: 'mg', route: 'IV', frequency: 'PRN'
+        });
+    });
+
+    test('an indented prefix after the medication colon belongs to the existing alias', async () => {
+        const result = await complete('Medication Morning:\n  aspi|');
+        expect(result.item).toBeDefined();
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(apply(result.item!, result.document));
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication).toHaveLength(1);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ name: 'Morning', productName: product.display, rxcui: product.rxcui });
+    });
+
+    test('searching in a quoted product label updates its paired RxCUI', async () => {
+        const result = await complete('Medication Morning: product "aspi|rin" rxcui "900002"');
+        expect(result.item).toBeDefined();
+        const parsed = await parseHelper<Model>(result.services.ClinicalDsl)(apply(result.item!, result.document));
+        expect(parsed.parseResult.parserErrors).toEqual([]);
+        expect(parsed.parseResult.value.medication[0]).toMatchObject({ name: 'Morning', productName: product.display, rxcui: product.rxcui });
+    });
+
     test('new prefix becomes readable alias plus durable exact binding', async () => {
         const result = await complete('medication aspi|');
         expect(result.item).toBeDefined();
@@ -196,7 +246,11 @@ describe('product completion transactions', () => {
 
     test('does not query from patient names, plan references, comments or values', async () => {
         for (const source of ['Patient aspi|: age 1, condition Fever', 'Plan P: prescribe aspi| for A',
-            '// medication aspi|', 'medication Demo: doseForm "aspi|"']) {
+            'Patient P: age 45, condition aspi|', 'show aspi|', '// medication aspi|',
+            'Medication Morning: /* aspi| */', 'medication Demo: doseForm "aspi|"',
+            'Medication Demo: doseForm Oral aspi|', 'Medication Demo: route aspi|',
+            'Medication Demo: frequency aspi|', 'Medication Demo: dose aspi|', 'Medication Demo: strength "aspi|"',
+            'Medication Demo: route\naspi|', 'Plan P: prescribe\naspi|']) {
             const mock = vi.fn(async () => response());
             const result = await complete(source, mock);
             expect(result.item).toBeUndefined();

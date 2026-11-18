@@ -33,7 +33,7 @@ Product strength and dose form can also be quoted: `strength "160MG/5ML"`, `dose
 
 Tab inserts both `product "aspirin synthetic product"` and `rxcui "900001"` (fictional example). The product label is exactly what the suggestion displayed. Both fields take quoted values, and their labels accept mixed case in either order. Search and resolution use the configured RxNorm release. Press **?** after either field for a concrete example of the missing counterpart. The medication name remains the local alias used by Plan; selecting a product does not determine the administered dose or frequency. Optional `strength` and `doseForm` must agree with the bound product when supplied.
 
-For a product search that preserves an existing alias, type a prefix inside the quoted RxCUI field, such as `rxcui "aspi"`, and accept a product with Tab (or first open the list with Ctrl+Space). The prefix is temporary editing text; export requires the numeric RxCUI inserted by selection. See [RxNorm product autocomplete](RXNORM-AUTOCOMPLETE.md) for the local service setup.
+Type `aspi` on a new declaration line to create a medication, or `Medication MorningMedication: aspi` to use an existing alias. Choose a product and press Tab. Ctrl+Space opens the list manually. Searching inside `rxcui "aspi"` is also supported. Export uses the saved numeric RxCUI and full product name. See [RxNorm product autocomplete](RXNORM-AUTOCOMPLETE.md) for the local service setup.
 
 References are case-insensitive with local-first precedence. When no local declaration exists, two matching declarations in other files produce an ambiguity error; they are never selected by loading order. Adding, renaming or deleting a file refreshes dependent references.
 

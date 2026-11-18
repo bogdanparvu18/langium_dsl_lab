@@ -96,7 +96,7 @@ export class ClinicalDslValidator {
         }
         // Previously saved files can identify a product by RxCUI and a pinned release alone.
         if (rxcui !== undefined && productName === undefined && rxnormRelease === undefined) {
-            accept('error', 'A selected RxCUI requires a product name. Type rxcui "aspi" and accept a product with Tab.', {
+            accept('error', 'A selected RxCUI requires a product name. Type a prefix after the colon, such as aspi, then choose a product and press Tab.', {
                 node: medication, property: 'rxcui'
             });
         }

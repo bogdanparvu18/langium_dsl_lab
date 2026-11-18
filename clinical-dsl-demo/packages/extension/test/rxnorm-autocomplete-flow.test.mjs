@@ -83,8 +83,8 @@ async function languageServer(t, url, configuration) {
     }
     return {
         connection, update,
-        complete: (uri, text, offset = text.length) => connection.sendRequest('textDocument/completion', {
-            textDocument: { uri }, position: positionAt(text, offset), context: { triggerKind: 1 }
+        complete: (uri, text, offset = text.length, triggerKind = 1) => connection.sendRequest('textDocument/completion', {
+            textDocument: { uri }, position: positionAt(text, offset), context: { triggerKind }
         }),
         preview: (uri, version) => connection.sendRequest('clinical-dsl/getShowPlans', { uri, version })
     };
@@ -116,6 +116,57 @@ function selected(result) {
     assert.ok(item, `Expected synthetic product among ${JSON.stringify(result?.items?.map(item => item.label))}`);
     return item;
 }
+
+test('typing only a product prefix on a new line can create a medication', { timeout: 15000 }, async t => {
+    const backend = await catalog(t);
+    const server = await languageServer(t, backend.url);
+    const uri = 'file:///rxnorm-flow/bare-new.clinical';
+    const before = 'Patient Alice: age 45, condition Fever\n';
+    const after = '\nPlan P: for Alice prescribe aspirin';
+    await server.update(uri, before + 'a' + after);
+    const initial = await server.complete(uri, before + 'a' + after, before.length + 1);
+    assert.equal(initial?.isIncomplete, true);
+    assert.equal(backend.requests.length, 0);
+    const text = before + 'aSpI' + after;
+    await server.update(uri, text, 2);
+    const item = selected(await server.complete(uri, text, before.length + 4, 3));
+    assert.equal(backend.requests[0].searchParams.get('q'), 'aspi');
+    assert.equal(applyCompletion(text, item),
+        before + `Medication aspirin: product ${JSON.stringify(product.display)} rxcui "${product.rxcui}"` + after);
+});
+
+test('a bare prefix in a bound Medication updates the selected name and ID and retains its Plan', { timeout: 15000 }, async t => {
+    const met = { ...product, display: 'Metformin fixture tablet', rxcui: '900003' };
+    const backend = await catalog(t, url => ({
+        schemaVersion: '1', release, query: url.searchParams.get('q'),
+        items: [{ ...met, display: 'Metformin alternative fixture tablet', rxcui: '900004' }, met], hasMore: false
+    }));
+    const server = await languageServer(t, backend.url);
+    const uri = 'file:///rxnorm-flow/bare-reselection.clinical';
+    const text = 'Patient Alice: age 45, condition Fever\n' +
+        'Medication MorningMedication: dose 10mg, mEtFormin, product "Old label" rxcui "900002" rxnormRelease /* keep */ "2025-01-01" route PO frequency BID\n' +
+        'Plan P: prescribe MorningMedication for Alice\nshow P';
+    await server.update(uri, text);
+    const offset = text.indexOf('mEtF') + 4;
+    const result = await server.complete(uri, text, offset);
+    const item = result?.items?.find(entry => entry.label === met.display);
+    assert.ok(item, 'The product selected from a generic prefix should be offered');
+    assert.equal(backend.requests[0].searchParams.get('q'), 'metf');
+    const changed = applyCompletion(text, item);
+    assert.doesNotMatch(changed, /rxnormRelease|900002|900004|Old label|mEtFormin/);
+    assert.ok(changed.includes('/* keep */'));
+    assert.equal((changed.match(/\bproduct\b/gi) ?? []).length, 1);
+    assert.equal((changed.match(/\brxcui\b/gi) ?? []).length, 1);
+    await server.update(uri, changed, 2);
+    const preview = await server.preview(uri, 2);
+    assert.equal(preview.items[0].error, undefined);
+    const medication = JSON.parse(preview.items[0].json).medication;
+    assert.equal(medication.name, 'MorningMedication');
+    assert.deepEqual(medication.productBinding, { display: met.display, rxcui: met.rxcui });
+    assert.deepEqual(medication.dose, { amount: 10, unit: 'mg' });
+    assert.equal(medication.route, 'PO');
+    assert.equal(medication.frequency, 'BID');
+});
 
 test('typing a prefix, accepting its edits and reopening preserves exact product identity', { timeout: 15000 }, async t => {
     const backend = await catalog(t);
@@ -328,7 +379,7 @@ test('bridge export retains a selected product after editor completion', { timeo
 }, async t => {
     const backend = await catalog(t);
     const server = await languageServer(t, backend.url);
-    const draft = 'medication aspi';
+    const draft = 'aspi';
     const uri = 'file:///rxnorm-flow/export.clinical';
     await server.update(uri, draft);
     const completed = applyCompletion(draft, selected(await server.complete(uri, draft)));

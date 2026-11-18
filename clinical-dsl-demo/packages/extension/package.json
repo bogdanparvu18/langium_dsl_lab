@@ -75,7 +75,7 @@
                     "type": "boolean",
                     "default": true,
                     "scope": "resource",
-                    "description": "Suggest exact RxNorm products while typing Medication names. Requires the local Scala product-search service."
+                    "description": "Suggest RxNorm products from a typed prefix such as aspi on a new line or in a Medication declaration. Requires the local Scala product-search service."
                 },
                 "clinicalDsl.rxnorm.searchUrl": {
                     "type": "string",

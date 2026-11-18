@@ -44,25 +44,21 @@ Reload the extension development host to use the new bundle.
 
 ## Select and preserve a product
 
-1. Type `medication aspi`. After at least two characters, the editor waits briefly and queries matching imported product names and synonyms.
-2. Inspect the product name and RxCUI in the suggestion list. Use the arrow keys to select the intended product, then **Tab** to accept it. **Ctrl+Space** opens suggestions manually.
-3. Completion inserts the full suggestion label in `product` and its identifier in `rxcui` in a single edit. For a new declaration it creates a readable identifier; selecting a product for an existing colon declaration preserves its alias and existing Plan references.
-4. Enter the administered `dose`, `route`, and `frequency`. Existing fields and comments are retained. Existing `strength` and `doseForm` are not silently overwritten.
-5. Save and run terminology resolution. Preview JSON contains the stored `productBinding` and, after successful validation, Scala's `selectedProduct`.
+Type a product prefix where you want a medication declaration. Two characters start the search. Choose the intended product in the list and press **Tab**. **Ctrl+Space** opens the list manually. The search works with prefixes of other product names and imported synonyms too.
 
-To select or change a product while keeping an arbitrary alias such as `MorningMedication`, type a search prefix inside the RxCUI quotes, for example `rxcui "aspi"`, then choose a product with Tab. The editor replaces the prefix with the numeric RxCUI and writes the full selected name beside it. If you select another product, Tab updates both values. Until a product is chosen, the nonnumeric search text is an incomplete binding and cannot be exported. The editor's automatic closing quotes keep the value ready for suggestions; Ctrl+Space also works.
+These three inputs show where to type. The examples use a synthetic catalog that returns `aspirin synthetic product` with RxCUI `900001`.
 
-For example, start with the cursor immediately after `aspi`, inside the quotes:
+| What you type | What appears after you accept the product |
+| --- | --- |
+| `aspi` on a new declaration line | `Medication aspirin: product "aspirin synthetic product" rxcui "900001"` |
+| `Medication aspi` | `Medication aspirin: product "aspirin synthetic product" rxcui "900001"` |
+| `Medication MorningMedication: aspi` | `Medication MorningMedication: product "aspirin synthetic product" rxcui "900001"` |
 
-```text
-Medication MorningMedication: rxcui "aspi"
-```
+A new medication gets a readable alias, made unique if needed. To change the product for an existing alias, type a prefix before its existing fields, for example `Medication MorningMedication: aspi product "Old label" rxcui "900002"`. With the cursor after `aspi`, choose the new product and press Tab. The editor replaces the previous name and RxCUI together and preserves Plan references.
 
-If the test catalog returns `aspirin synthetic product` with RxCUI `900001`, accepting that suggestion produces this exact line:
+The bare shortcut takes a single word. For a longer phrase with spaces or punctuation, type inside a quoted product value, for example `product "aspirin 81"`. Typing inside `rxcui "aspi"` also works.
 
-```text
-Medication MorningMedication: product "aspirin synthetic product" rxcui "900001"
-```
+Enter the administered `dose`, `route`, and `frequency`, then save and run terminology resolution. Existing fields and comments are retained. An unaccepted search prefix is temporary editing text. Only a selected product supplies an exact RxCUI binding.
 
 A complete plan using the same synthetic product looks like this:
 

@@ -1,16 +1,19 @@
 import * as vscode from 'vscode';
 import { CstUtils, EmptyFileSystem, GrammarUtils, type AstNode } from 'langium';
 import {
-    createClinicalDslServices, isMedication, isPatient, isPlan, isDisplayPlan,
+    createClinicalDslServices, findProductTarget, isMedication, isPatient, isPlan, isDisplayPlan,
     type Medication, type Model, type Plan
 } from 'clinical-dsl-language';
 
 // Local parsing uses the same comment, string and field rules as the editor.
 // It performs no workspace linking, file access or RxNorm requests.
 let parserServices: ReturnType<typeof createClinicalDslServices> | undefined;
-export function parseClinicalDocument(text: string): Model {
+function localParser() {
     parserServices ??= createClinicalDslServices(EmptyFileSystem);
-    return parserServices.ClinicalDsl.parser.LangiumParser.parse<Model>(text).value;
+    return parserServices.ClinicalDsl.parser;
+}
+export function parseClinicalDocument(text: string): Model {
+    return localParser().LangiumParser.parse<Model>(text).value;
 }
 
 const fieldNames = new Set(['dose', 'strength', 'doseform', 'route', 'frequency', 'product', 'rxcui', 'rxnormrelease', 'for', 'prescribe']);
@@ -67,15 +70,15 @@ function medicationHelp(node: Medication, field: string | undefined): string {
     const bindingExample = 'product "Demo tablet" rxcui "900001" (fictional example)';
     if (missingProduct || missingId) missingExamples.push(bindingExample);
     const completionExample = missingExamples.length ? ` To complete, for example: ${missingExamples.join(', ')}.` : '';
-    let example = 'Examples: dose 10mg, route PO, frequency BID.';
+    const selection = `Type a prefix directly after the colon, for example Medication ${node.name || 'DemoMed'}: aspi. Choose a product and press Tab to insert its full RxNorm name and RxCUI. Ctrl+Space opens the list.`;
+    let example = selection;
     if (field === 'strength') example = 'Product strength example: strength 325mg; include doseForm too, for example doseForm Oral Tablet.';
     else if (field === 'doseform') example = 'Dose form example: doseForm Oral Tablet or doseForm "Metered Dose Inhaler"; include strength too, for example strength 325mg.';
     else if (field === 'route') example = 'Route example: route PO. Other routes: IV, IM, SC, PR, SL, BUCC.';
     else if (field === 'frequency') example = 'Frequency example: frequency BID. Other values: QD, TID, QID, PRN, Q4H, Q6H, Q8H, Q12H, Q24H.';
     else if (field === 'dose') example = 'Administered dose example: dose 10mg or 10 mg. Units: mg, mcg, g, ml, puff, unit.';
-    else if (field === 'rxcui' || field === 'product' || field === 'rxnormrelease') {
-        example = 'Type rxcui "aspi" and accept the selected suggestion with Tab. Ctrl+Space opens the list. The editor writes the full RxNorm product name and numeric ID.';
-        if (!missingProduct && !missingId) example += ` Example: ${bindingExample}.`;
+    else if (['rxcui', 'product', 'rxnormrelease'].includes(field ?? '') && !missingProduct && !missingId) {
+        example += ` Example: ${bindingExample}.`;
     }
     if (!node.name) return 'Medication NAME: ... — for example, Medication DemoMed: dose 10mg, route PO, frequency BID. Examples are for syntax only.';
     return `${missing.length ? `Missing or incomplete: ${missing.join(', ')}. ` : 'Required medication fields are present. '}${example}${completionExample} Fields may be reordered. See Problems for validation errors. Examples are for syntax only.`;
@@ -100,6 +103,11 @@ function planHelp(node: Plan, field: string | undefined, model: Model): string {
 
 export function contextHelpMessage(text: string, offset: number): string {
     const model = parseClinicalDocument(text);
+    const target = findProductTarget(text, offset, model, localParser());
+    if (target?.kind === 'standalone') {
+        return 'Type a product prefix on its own line, for example aspi. Choose a product and press Tab. The editor creates a Medication declaration with the full product name and RxCUI, for example Medication Demo: product "Demo tablet" rxcui "900001" (fictional).';
+    }
+    if (target?.kind === 'bare') return medicationHelp(target.medication, 'product');
     const declarations: AstNode[] = [...model.patient, ...model.medication, ...model.plan, ...model.display]
         .filter(node => node.$cstNode).sort((a, b) => a.$cstNode!.offset - b.$cstNode!.offset);
     // The AST supplies the entire declaration, including suffix fields and
@@ -110,7 +118,7 @@ export function contextHelpMessage(text: string, offset: number): string {
     if (isPlan(node)) return planHelp(node, field, model);
     if (isPatient(node)) return 'Patient NAME: age NUMBER, condition IDENTIFIER';
     if (isDisplayPlan(node)) return 'show PLAN — selects a plan for JSON preview and RxNorm export.';
-    return 'Start with Medication DemoMed: dose 10mg, route PO, frequency BID. Examples are for syntax only.';
+    return 'Type a prefix such as aspi and press Tab on a product suggestion to create a Medication declaration. You can also start with Medication DemoMed: dose 10mg, route PO, frequency BID.';
 }
 
 /** The key binding consumes ? before it reaches the document or language server. */
