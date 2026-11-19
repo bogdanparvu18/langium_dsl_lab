@@ -51,7 +51,7 @@ Identifier returns string:
     ID | 'patient' | 'Patient' | 'age' | 'condition' |
     'medication' | 'plan' | 'show' | 'for' | 'prescribe' |
     'dose' | 'strength' | 'doseForm' | 'route' | 'frequency' | 'product' | 'rxcui' | 'rxnormRelease' |
-    Unit | Route | Frequency;
+    Unit | Route | FrequencyCode;
 
 Plan:
     'plan' name=Identifier
@@ -84,6 +84,10 @@ Route returns string:
     | 'BUCC';
 
 Frequency returns string:
+    STRING | ((FrequencyCode | ID) (('-' | '–') INT ID)?
+        | INT (('-' | '–') INT)? ID) 'PRN'?;
+
+FrequencyCode returns string:
     'QD'
     | 'BID'
     | 'TID'

@@ -133,7 +133,7 @@ export function productCompletion(document: LangiumDocument, target: ProductComp
         kind: CompletionItemKind.Value,
         detail: `${product.tty} · RxCUI ${product.rxcui} · RxNorm ${product.release}`,
         documentation: { kind: 'plaintext', value: `Select this exact RxNorm product. Local identifier: ${alias}. ` +
-            'Administered dose, route and frequency remain yours to enter. Existing strength and doseForm are retained and checked during resolution.' },
+            'A matching Canadian monograph can supply an editable dose and frequency. Enter the route separately. Existing strength and doseForm are retained and checked during resolution.' },
         filterText: `${prefix} ${product.display}`,
         sortText: `0_${String(index).padStart(3, '0')}_${product.rxcui}`,
         preselect: false,

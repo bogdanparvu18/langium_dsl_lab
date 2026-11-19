@@ -25,7 +25,7 @@ In a writable `.clinical` editor:
 
 The command is **Clinical DSL: Context Help (?)** in the Command Palette. Its default keybinding is **Shift+/**; on other keyboard layouts, rebind that command in Keyboard Shortcuts. The shortcut consumes the key without inserting `?`: it is editor help, not part of the grammar, saved document, or JSON sent to Scala. A question mark pasted into the source is not automatically removed and can cause a syntax error.
 
-Medication and plan keywords and their supported values accept mixed case; units, routes and frequency values are normalized for downstream processing. The patient declaration keeps its existing structure. For RxNorm lookup, type a prefix such as `aspi` on a new declaration line, or type `Medication MorningMedication: aspi` to keep your own alias. Choose a product from the local catalog and press **Tab**. The editor writes its full RxNorm name and numeric RxCUI together. With the companion Scala monograph service, confirm a Canadian DIN to cache and open its Health Canada prescribing information. See [RxNorm product autocomplete](RXNORM-AUTOCOMPLETE.md) for setup, behavior, and the JSON contract.
+Medication and plan keywords and their supported values accept mixed case; units, routes and frequency values are normalized for downstream processing. The patient declaration keeps its existing structure. For RxNorm lookup, type a prefix such as `aspi` on a new declaration line, or type `Medication MorningMedication: aspi` to keep your own alias. Choose a product from the local catalog and press **Tab**. The editor writes its full RxNorm name and numeric RxCUI together. Confirm the Canadian DIN to retrieve its Health Canada monograph. When the Scala service can identify an applicable dosage passage, the editor inserts an editable dose and frequency in the same Medication declaration. See [RxNorm product autocomplete](RXNORM-AUTOCOMPLETE.md) for setup, behavior, and the JSON contract.
 
 Existing documents without an explicit product binding retain the original bridge contract. New selections export `productBinding: { rxcui, display, release }`, with the release taken from configuration; the matching Scala bridge emits request schema `2` with policy `explicit-product-v1`. The bridge still exports the plans selected by `show`, preserving source positions. Incomplete medication nodes have optional fields in the generated TypeScript AST; validation blocks preview/export until required fields are supplied. The search service creates its prefix index over the existing imported data; no RxNorm reimport is needed.
 
@@ -149,7 +149,7 @@ Use only one declaration with a given medication name in a document; names that 
 | Strength | Positive mass in `mg`, `mcg`, or `g`, optionally per `ml`, e.g. `10mg/ml`, `50 mg/5 ml`, or `"160MG/5ML"`. |
 | Dose form | Unquoted words such as `Oral Tablet` or `Metered Dose Inhaler`; use quotes for values containing other field keywords or ending in `Dose`. |
 | Route | `PO`, `IV`, `IM`, `SC`, `PR`, `SL`, `BUCC`. |
-| Frequency | `QD`, `BID`, `TID`, `QID`, `PRN`, `Q4H`, `Q6H`, `Q8H`, `Q12H`, `Q24H`. |
+| Frequency | `QD`, `BID`, `TID`, `QID`, `PRN`, or an hourly interval such as `6H`, `Q6H` or `4-6H PRN`. |
 | RxCUI | `rxcui "900001"` (syntax-only identifier example); quoted positive digits, at most 20. |
 | Product | `product "aspirin synthetic product"` (fixture label). Tab inserts the full selected name and its RxCUI together. |
 

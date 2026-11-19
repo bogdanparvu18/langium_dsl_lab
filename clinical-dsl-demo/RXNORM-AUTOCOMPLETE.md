@@ -58,7 +58,7 @@ A new medication gets a readable alias, made unique if needed. To change the pro
 
 The bare shortcut takes a single word. For a longer phrase with spaces or punctuation, type inside a quoted product value, for example `product "aspirin 81"`. Typing inside `rxcui "aspi"` also works.
 
-Enter the administered `dose`, `route`, and `frequency`, then save and run terminology resolution. Existing fields and comments are retained. An unaccepted search prefix is temporary editing text. Only a selected product supplies an exact RxCUI binding.
+Review the administered `dose` and `frequency` in the declaration. Enter any missing fields, including `route`, before final resolution. Existing fields and comments are retained. An unaccepted search prefix is temporary editing text. Only a selected product supplies an exact RxCUI binding.
 
 A complete plan using the same synthetic product looks like this:
 
@@ -77,7 +77,17 @@ Tab uses VS Code's normal acceptance of the selected suggestion. It is not globa
 
 Start `serve-products` from the installed Scala checkout after bootstrap has populated the Health Canada Drug Product Database (DPD). Typing a prefix searches RxNorm locally. Accepting a product asks the same Scala service for Canadian candidates matching the selected RxCUI and release. The picker shows the brand, DIN, ingredients, forms and routes so you can confirm the presentation. Press Escape to keep the RxNorm selection and continue without opening a monograph.
 
-After confirmation, Scala obtains the English PDF linked by Health Canada and keeps the document in the installed Scala repository. The notification offers **Open dosage section** if the service located the relevant PDF page, or **Open PDF** otherwise. The document opens in your browser. Dose, route and frequency remain editable by the clinician.
+After DIN confirmation, Scala reads the dosage section of the cached English PDF. When it finds one supported instruction for that presentation, the editor automatically writes the suggested dose and frequency as ordinary DSL text. You can edit either value before saving or running resolution. The notification identifies the source page and lets you open it.
+
+For example, type `Medication Dimineata: tyle`, accept **acetaminophen 500 MG Oral Tablet [Tylenol]** with Tab, and select **TYLENOL EXTRA STRENGTH** (DIN `00559407`). With the July 3, 2024 monograph, the draft reads
+
+```text
+Medication Dimineata: product "acetaminophen 500 MG Oral Tablet [Tylenol]" rxcui "209459" dose 500 mg frequency 4-6H PRN
+```
+
+Here `4-6H PRN` means every four to six hours as needed. The 500 mg dose is the lower end of the range in the immediate-release instructions for adults and children aged 12 and over. The same passage gives single-dose and daily limits. To enter a different frequency, edit the field directly, for example to `frequency 6H` for a fixed six-hour interval. Add the intended route before resolving a complete plan. [Canadian Tylenol monograph, page 14](https://pdf.hres.ca/dpd_pm/00076531.PDF#page=14).
+
+A PDF can cover multiple strengths and populations. When there is no unambiguous supported passage, the editor leaves the fields available for manual entry. A dose or frequency the clinician has already entered is preserved. If only one field exists, the editor fills its counterpart only when the existing value agrees with the same source instruction. It also skips insertion if the document changes during lookup.
 
 To reopen the PDF, put the cursor in the Medication declaration and run **Clinical DSL: Open Health Canada Product Monograph** from the Command Palette. For saved documents, the extension remembers the confirmed DIN for that declaration, RxNorm product and release in the current VS Code workspace. If multiple presentations are available, the command also lets you change the DIN. PDF reuse works offline from Health Canada while the local Scala service and databases are running. When a Canadian match or electronic monograph is unavailable, the editor reports this and keeps the DSL text.
 

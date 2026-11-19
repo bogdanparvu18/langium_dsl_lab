@@ -1,5 +1,6 @@
 import { GrammarUtils, type ValidationAcceptor, type ValidationChecks } from 'langium';
 import type { ClinicalDslAstType, Medication, Patient, Model } from './generated/ast.js';
+import { normalizeFrequency } from './frequency.js';
 import type { ClinicalDslServices } from './clinical-dsl-module.js';
 import {
     DEMO_AMOUNT_OPTIONS
@@ -36,6 +37,11 @@ export class ClinicalDslValidator {
             if (medication[property] === undefined) {
                 accept('error', `Missing ${property}. Example: ${example}.`, { node: medication, property: 'name' });
             }
+        }
+        if (medication.frequency !== undefined && !normalizeFrequency(medication.frequency)) {
+            accept('error', 'Use a frequency code or an interval in hours, such as frequency 4-6H PRN. Ranges must increase.', {
+                node: medication, property: 'frequency'
+            });
         }
     }
     checkDuplicateNames(model: Model, accept: ValidationAcceptor): void {

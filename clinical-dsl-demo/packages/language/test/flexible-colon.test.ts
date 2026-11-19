@@ -61,6 +61,21 @@ show DemoPlan`);
         expect(doc.parseResult.value.medication[0]).toMatchObject({ amount: 2.5, unit: 'ml', route: 'IV', frequency: 'Q4H' });
     });
 
+    test.each([
+        ['6H', 'Q6H'], ['q3h', 'Q3H'], ['4-6h pRn', 'Q4-6H PRN'], ['q4-6H PRN', 'Q4-6H PRN'],
+        ['4 – 6 h', 'Q4-6H'], ['"q3h PRN"', 'Q3H PRN'], ["'8-12H'", 'Q8-12H']
+    ])('preserves the interval and as-needed qualifier in %s', async (source, canonical) => {
+        const doc = await read(`Medication Morning: frequency ${source} 500 mg route PO`);
+        expectValid(doc);
+        expect(doc.parseResult.value.medication[0].frequency).toBe(canonical);
+    });
+
+    test.each(['Q0H', '6-4H', '"Q4-4H PRN"', '5mg', 'QD PRN', '"4H or 6H"', 'nonsense'])(
+        'rejects invalid frequency %s', async value => {
+            const doc = await read(`Medication Morning: dose 500 mg route PO frequency ${value}`);
+            expect(errors(doc).length).toBeGreaterThan(0);
+        });
+
     test('retains product strength and dose form while allowing them in different positions', async () => {
         const doc = await read(`Patient Andrei: age 45, condition Fever
 Medication DemoMed: doseForm Oral Tablet, route po, strength 325mg, frequency prn, dose 15mg
