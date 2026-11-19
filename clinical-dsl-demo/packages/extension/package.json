@@ -41,6 +41,10 @@
                 "title": "Clinical DSL: Set RxNorm PostgreSQL Password"
             },
             {
+                "command": "clinical-dsl.monograph.open",
+                "title": "Clinical DSL: Open Health Canada Product Monograph"
+            },
+            {
                 "command": "clinical-dsl.contextHelp",
                 "title": "Clinical DSL: Context Help (?)"
             }

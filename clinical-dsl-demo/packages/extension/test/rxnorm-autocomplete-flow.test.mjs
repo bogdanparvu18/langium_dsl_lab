@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { harness as monographEditor } from './support/monograph.mjs';
 import { createMessageConnection, IPCMessageReader, IPCMessageWriter } from 'vscode-languageserver/node';
 
 // Synthetic catalog data: these identifiers are test fixtures, not RxNorm claims.
@@ -131,8 +132,32 @@ test('typing only a product prefix on a new line can create a medication', { tim
     await server.update(uri, text, 2);
     const item = selected(await server.complete(uri, text, before.length + 4, 3));
     assert.equal(backend.requests[0].searchParams.get('q'), 'aspi');
+    assert.deepEqual(item.command, {
+        title: 'Find Canadian product monograph', command: 'clinical-dsl.monograph.afterAcceptance',
+        arguments: [{ uri, alias: 'aspirin', rxcui: product.rxcui, display: product.display, release }]
+    });
     assert.equal(applyCompletion(text, item),
         before + `Medication aspirin: product ${JSON.stringify(product.display)} rxcui "${product.rxcui}"` + after);
+});
+
+test('a real completion invokes the monograph command for the bound alias after its edits', { timeout: 15000 }, async t => {
+    const editor = await monographEditor(t);
+    const lsp = await languageServer(t, editor.origin);
+    const draft = 'Medication MorningMedication: 5 mg, ExAm, route PO frequency PRN';
+    await lsp.update(editor.uri, draft);
+    const suggestions = await lsp.complete(editor.uri, draft, draft.indexOf('ExAm') + 4);
+    const item = suggestions.items.find(entry => entry.label === 'Example 20 MG Oral Tablet');
+    assert.deepEqual(editor.requests.map(entry => entry.path), ['/products']);
+    const applied = applyCompletion(draft, item);
+    editor.edit(applied);
+    await lsp.update(editor.uri, applied, 2);
+    // VS Code executes an LSP CompletionItem's command after applying the primary and additional edits.
+    await editor.commands.get(item.command.command)(...item.command.arguments);
+    assert.deepEqual(editor.requests.map(entry => entry.path), ['/products', '/canadian-products', '/monograph']);
+    assert.equal(editor.opened[0].searchParams.get('din'), '00012346');
+    assert.equal(editor.opened[0].hash, '#page=14');
+    assert.equal(editor.document.getText(), applied);
+    assert.match(applied, /MorningMedication: 5 mg/);
 });
 
 test('a bare prefix in a bound Medication updates the selected name and ID and retains its Plan', { timeout: 15000 }, async t => {

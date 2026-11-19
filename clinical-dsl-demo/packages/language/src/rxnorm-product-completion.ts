@@ -138,6 +138,11 @@ export function productCompletion(document: LangiumDocument, target: ProductComp
         sortText: `0_${String(index).padStart(3, '0')}_${product.rxcui}`,
         preselect: false,
         commitCharacters: [],
+        command: {
+            title: 'Find Canadian product monograph',
+            command: 'clinical-dsl.monograph.afterAcceptance',
+            arguments: [{ uri: text.uri, alias, rxcui: product.rxcui, display: product.display, release: product.release }]
+        },
         textEdit: { range: range(start, end), newText: replacement },
         ...(edits.length ? { additionalTextEdits: edits } : {})
     };

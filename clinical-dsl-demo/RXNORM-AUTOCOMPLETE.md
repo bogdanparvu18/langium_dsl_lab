@@ -73,6 +73,14 @@ The binding can appear anywhere among the colon fields and its keywords accept m
 
 Tab uses VS Code's normal acceptance of the selected suggestion. It is not globally rebound, and automatic completion does not mean that a clinician has confirmed a prescription. Without a visible suggestion list, Tab retains the user's editor behavior.
 
+## Health Canada monographs
+
+Start `serve-products` from the installed Scala checkout after bootstrap has populated the Health Canada Drug Product Database (DPD). Typing a prefix searches RxNorm locally. Accepting a product asks the same Scala service for Canadian candidates matching the selected RxCUI and release. The picker shows the brand, DIN, ingredients, forms and routes so you can confirm the presentation. Press Escape to keep the RxNorm selection and continue without opening a monograph.
+
+After confirmation, Scala obtains the English PDF linked by Health Canada and keeps the document in the installed Scala repository. The notification offers **Open dosage section** if the service located the relevant PDF page, or **Open PDF** otherwise. The document opens in your browser. Dose, route and frequency remain editable by the clinician.
+
+To reopen the PDF, put the cursor in the Medication declaration and run **Clinical DSL: Open Health Canada Product Monograph** from the Command Palette. For saved documents, the extension remembers the confirmed DIN for that declaration, RxNorm product and release in the current VS Code workspace. If multiple presentations are available, the command also lets you change the DIN. PDF reuse works offline from Health Canada while the local Scala service and databases are running. When a Canadian match or electronic monograph is unavailable, the editor reports this and keeps the DSL text.
+
 ## Identity and validation
 
 | Situation | Result |
