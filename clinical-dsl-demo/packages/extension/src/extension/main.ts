@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { registerMonographs } from './monograph.js';
 import { registerContextHelp } from './context-help.js';
 import * as path from 'node:path';
 import { registerRxNorm } from './rxnorm.js';
@@ -40,6 +41,7 @@ function rxnormSearchConfiguration() {
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     registerContextHelp(context);
+    registerMonographs(context);
     const rxnorm = registerRxNorm(context);
     const serverModule = context.asAbsolutePath(path.join('out', 'language', 'main.cjs'));
     const debugOptions = {
