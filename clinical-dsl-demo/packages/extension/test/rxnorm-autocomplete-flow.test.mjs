@@ -160,6 +160,31 @@ test('a real completion invokes the monograph command for the bound alias after 
     assert.match(applied, /MorningMedication: 5 mg/);
 });
 
+test('a bare prefix, native acceptance and confirmed DIN insert editable values consumed by the language server', { timeout: 15000 }, async t => {
+    const editor = await monographEditor(t, { info: { regimenSuggestions: [{ dose: '20 mg', frequency: 'q4-6h PRN',
+        page: 16, context: 'Synthetic adult dosage section', evidence: 'Fixture regimen for the selected strength.' }] },
+        noticeAction: () => undefined });
+    const lsp = await languageServer(t, editor.origin);
+    await lsp.update(editor.uri, 'exam');
+    const completion = (await lsp.complete(editor.uri, 'exam')).items.find(item => item.label === 'Example 20 MG Oral Tablet');
+    assert.ok(completion);
+    editor.edit(applyCompletion('exam', completion));
+    await editor.commands.get(completion.command.command)(...completion.command.arguments);
+    const filled = editor.document.getText();
+    assert.match(filled, /dose 20 mg frequency 4-6H PRN$/);
+    const alias = completion.command.arguments[0].alias;
+    const plan = medication => `Patient Alice: age 45, condition Fever\n${medication} route PO\nPlan P: prescribe ${alias} for Alice\nshow P`;
+    await lsp.update(editor.uri, plan(filled), 2);
+    const medication = JSON.parse((await lsp.preview(editor.uri, 2)).items[0].json).medication;
+    assert.deepEqual(medication.dose, { amount: 20, unit: 'mg' });
+    assert.equal(medication.frequency, 'Q4-6H PRN');
+    const changed = filled.replace('dose 20 mg frequency 4-6H PRN', 'dose 10 mg frequency 6H');
+    await lsp.update(editor.uri, plan(changed), 3);
+    const edited = JSON.parse((await lsp.preview(editor.uri, 3)).items[0].json).medication;
+    assert.deepEqual(edited.dose, { amount: 10, unit: 'mg' });
+    assert.equal(edited.frequency, 'Q6H');
+});
+
 test('a bare prefix in a bound Medication updates the selected name and ID and retains its Plan', { timeout: 15000 }, async t => {
     const met = { ...product, display: 'Metformin fixture tablet', rxcui: '900003' };
     const backend = await catalog(t, url => ({

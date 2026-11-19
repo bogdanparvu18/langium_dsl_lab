@@ -79,3 +79,67 @@ test('reopening uses the service label for an earlier release-pinned binding and
     assert.equal(h.requests.length, 2);
     assert.match(h.notices.at(-1), /Place the cursor/);
 });
+
+const suggestion = { dose: '20 mg', frequency: 'Q4-6H PRN', page: 16,
+    context: 'Example tablets; adult population; maximum stated in the source.',
+    evidence: 'Synthetic PDF fixture: 20 mg every 4 to 6 hours as required.' };
+const selected = `Medication Morning: product "${bound.display}" rxcui "${bound.rxcui}"`;
+
+test('a selected presentation fills editable fields immediately and offers the exact source page', async t => {
+    const h = await harness(t, { info: { regimenSuggestions: [suggestion] },
+        noticeAction: (_message, buttons) => buttons.includes('Read source passage') ? 'Read source passage' : buttons[0] });
+    h.edit(selected + ' route PO');
+    await h.accept();
+    assert.equal(h.document.getText(), selected + ' route PO dose 20 mg frequency 4-6H PRN');
+    assert.equal(h.editBatches.length, 1);
+    assert.equal(h.picks.length, 1, 'the DIN picker is the only selection');
+    assert.match(h.notices[0], /PDF p\. 16/);
+    assert.ok(h.details[0].includes(suggestion.evidence));
+    assert.ok(h.details[0].includes(suggestion.context));
+    assert.equal(h.opened[0].hash, '#page=16');
+    h.edit(h.document.getText().replace('dose 20 mg', 'dose 10 mg').replace('4-6H PRN', 'BID'));
+    await h.reopen();
+    assert.match(h.document.getText(), /dose 10 mg frequency BID$/);
+    assert.equal(h.editBatches.length, 1, 'manual changes survive a second lookup');
+    await h.accept();
+    assert.match(h.notices.at(-1), /existing dose and frequency were kept/);
+});
+
+test('refusing optional source preview still leaves both fields in the document', async t => {
+    const h = await harness(t, { info: { regimenSuggestions: [suggestion] }, noticeAction: () => undefined });
+    h.edit(selected);
+    await h.accept();
+    assert.equal(h.document.getText(), selected + ' dose 20 mg frequency 4-6H PRN');
+    assert.equal(h.opened.length, 0);
+});
+
+test('auto-fill completes only a compatible partially written order', async t => {
+    const h = await harness(t, { info: { regimenSuggestions: [{ ...suggestion, dose: '10 mg', frequency: 'Q8H' }] } });
+    h.edit(selected + ' dose 10mg');
+    await h.accept();
+    assert.equal(h.document.getText(), selected + ' dose 10mg frequency 8H');
+    h.edit(selected + ' dose 3mg');
+    await h.reopen();
+    assert.equal(h.document.getText(), selected + ' dose 3mg');
+    h.edit(selected + ' route IV');
+    await h.accept();
+    assert.equal(h.document.getText(), selected + ' route IV');
+});
+
+test('manual edits during lookup, missing evidence and a rejected editor transaction produce no dose draft', async t => {
+    for (const overrides of [
+        { duringPost: ({ edit, document }) => edit(document.getText() + ' route PO') },
+        { info: { regimenSuggestions: [{ ...suggestion, evidence: '' }] } },
+        { info: { regimenSuggestions: [] } },
+        { info: { regimenSuggestions: [suggestion, { ...suggestion, context: 'A second qualifying population.' }] } },
+        { info: { regimenSuggestions: [suggestion, { malformed: true }] } },
+        { rejectEdit: true }
+    ]) {
+        const h = await harness(t, { info: { regimenSuggestions: [suggestion] }, ...overrides });
+        h.edit(selected);
+        await h.accept();
+        assert.equal(h.editBatches.length, 0);
+        assert.doesNotMatch(h.document.getText(), / dose | frequency /);
+        assert.ok(h.opened[0]);
+    }
+});

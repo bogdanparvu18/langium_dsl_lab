@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { CstUtils, EmptyFileSystem, GrammarUtils, type AstNode } from 'langium';
 import {
-    createClinicalDslServices, findProductTarget, isMedication, isPatient, isPlan, isDisplayPlan,
+    createClinicalDslServices, findProductTarget, normalizeFrequency, isMedication, isPatient, isPlan, isDisplayPlan,
     type Medication, type Model, type Plan
 } from 'clinical-dsl-language';
 
@@ -12,8 +12,11 @@ function localParser() {
     parserServices ??= createClinicalDslServices(EmptyFileSystem);
     return parserServices.ClinicalDsl.parser;
 }
+export function parseClinicalDocumentResult(text: string) {
+    return localParser().LangiumParser.parse<Model>(text);
+}
 export function parseClinicalDocument(text: string): Model {
-    return localParser().LangiumParser.parse<Model>(text).value;
+    return parseClinicalDocumentResult(text).value;
 }
 
 const fieldNames = new Set(['dose', 'strength', 'doseform', 'route', 'frequency', 'product', 'rxcui', 'rxnormrelease', 'for', 'prescribe']);
@@ -43,7 +46,7 @@ function medicationHelp(node: Medication, field: string | undefined): string {
         dose: typeof node.amount === 'number' && Number.isFinite(node.amount) && node.amount > 0 &&
             ['mg', 'mcg', 'g', 'ml', 'puff', 'unit'].includes(node.unit ?? ''),
         route: ['PO', 'IV', 'IM', 'SC', 'PR', 'SL', 'BUCC'].includes(node.route ?? ''),
-        frequency: ['QD', 'BID', 'TID', 'QID', 'PRN', 'Q4H', 'Q6H', 'Q8H', 'Q12H', 'Q24H'].includes(node.frequency ?? ''),
+        frequency: !!normalizeFrequency(node.frequency ?? ''),
         strength: !!node.productStrength?.trim(),
         doseForm: !!node.doseForm?.trim()
     };
@@ -75,7 +78,7 @@ function medicationHelp(node: Medication, field: string | undefined): string {
     if (field === 'strength') example = 'Product strength example: strength 325mg; include doseForm too, for example doseForm Oral Tablet.';
     else if (field === 'doseform') example = 'Dose form example: doseForm Oral Tablet or doseForm "Metered Dose Inhaler"; include strength too, for example strength 325mg.';
     else if (field === 'route') example = 'Route example: route PO. Other routes: IV, IM, SC, PR, SL, BUCC.';
-    else if (field === 'frequency') example = 'Frequency example: frequency BID. Other values: QD, TID, QID, PRN, Q4H, Q6H, Q8H, Q12H, Q24H.';
+    else if (field === 'frequency') example = 'Frequency example: frequency BID. An interval may include an hour range and PRN, for example frequency 4-6H PRN.';
     else if (field === 'dose') example = 'Administered dose example: dose 10mg or 10 mg. Units: mg, mcg, g, ml, puff, unit.';
     else if (['rxcui', 'product', 'rxnormrelease'].includes(field ?? '') && !missingProduct && !missingId) {
         example += ` Example: ${bindingExample}.`;

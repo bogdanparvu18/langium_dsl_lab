@@ -17,7 +17,7 @@ export const items = ['00012345', '00012346'].map((din, i) => ({ din, drugCode: 
 const noopEvent = () => ({ dispose() {} });
 
 export async function harness(t, options = {}) {
-    const requests = [], notices = [], warnings = [], opened = [], picks = [];
+    const requests = [], notices = [], warnings = [], opened = [], picks = [], editBatches = [], details = [];
     const memory = new Map(), commands = new Map();
     const candidates = { release, rxcui: bound.rxcui, rxnormDisplay: bound.display, items };
     const server = createServer((req, res) => {
@@ -32,6 +32,7 @@ export async function harness(t, options = {}) {
                 break;
             case '/canadian-products': payload = options.candidates ?? candidates; break;
             case '/monograph': {
+                options.duringPost?.({ edit, document });
                 const sha256 = 'b'.repeat(64);
                 const query = new URLSearchParams(url.search);
                 query.set('sha256', sha256);
@@ -50,11 +51,12 @@ export async function harness(t, options = {}) {
     const uri = 'file:///workspace/example.clinical';
     let text = `Medication Morning: product "${bound.display}" rxcui "${bound.rxcui}" dose 5mg route PO frequency PRN`;
     const document = { uri: { toString: () => uri }, version: 1, languageId: 'clinical-dsl',
-        getText: () => text, offsetAt: () => 14 };
+        getText: () => text, offsetAt: () => 14, positionAt: offset => offset };
     const edit = value => { document.version++; text = value; };
     const config = { get: (key, fallback) => key === 'searchUrl' ? origin : fallback };
     const vscode = {
         Uri: { parse: url => new URL(url) },
+        Range: class { constructor(start, end) { this.start = start; this.end = end; } },
         env: { openExternal: async url => { opened.push(url); return true; } },
         CancellationTokenSource: class {
             token = { isCancellationRequested: false, onCancellationRequested: noopEvent };
@@ -64,13 +66,26 @@ export async function harness(t, options = {}) {
         commands: { registerCommand(name, cb) { commands.set(name, cb); return noopEvent(); } },
         workspace: { isTrusted: true, getConfiguration: () => config, onDidChangeConfiguration: noopEvent },
         window: {
-            activeTextEditor: { document, selection: { active: {} } }, onDidChangeActiveTextEditor: noopEvent,
+            activeTextEditor: { document, selection: { active: {} }, async edit(callback) {
+                const edits = [];
+                callback({ replace: (range, text) => edits.push({ ...range, text }) });
+                if (options.rejectEdit) return false;
+                editBatches.push(edits);
+                edit([...edits].sort((a, b) => b.start - a.start)
+                    .reduce((source, { start, end, text }) => source.slice(0, start) + text + source.slice(end), text));
+                return true;
+            } }, onDidChangeActiveTextEditor: noopEvent,
             async showQuickPick(choices) {
                 picks.push(choices);
                 if (options.duringPick) options.duringPick({ edit, document });
                 return options.cancel ? undefined : choices.at(-1);
             },
-            async showInformationMessage(message, button) { notices.push(message); return button; },
+            async showInformationMessage(message, ...args) {
+                notices.push(message);
+                const buttons = args.filter(arg => typeof arg === 'string');
+                if (args[0]?.modal) details.push(args[0].detail);
+                return options.noticeAction ? options.noticeAction(message, buttons) : buttons[0];
+            },
             async showWarningMessage(message) { warnings.push(message); }
         }
     };
@@ -82,7 +97,7 @@ export async function harness(t, options = {}) {
         get: key => memory.get(key), update: async (key, value) => memory.set(key, value) } };
     module.exports.registerMonographs(context);
     t.after(() => { context.subscriptions.forEach(d => d.dispose()); server.closeAllConnections(); return new Promise(r => server.close(r)); });
-    return { uri, commands, document, requests, notices, warnings, opened, picks, memory, edit, origin,
+    return { uri, commands, document, requests, notices, warnings, opened, picks, memory, edit, origin, editBatches, details,
         accept: () => commands.get('clinical-dsl.monograph.afterAcceptance')({ ...bound, uri }),
         reopen: () => commands.get('clinical-dsl.monograph.open')() };
 }

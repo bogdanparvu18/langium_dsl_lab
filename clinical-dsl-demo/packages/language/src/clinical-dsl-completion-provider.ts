@@ -274,7 +274,7 @@ const FIELD_KEYWORDS = new Map([
     ['for', 'patient'], ['prescribe', 'medication']
 ]);
 const RULE_FIELDS = new Map([
-    ['DoseAmount', 'amount'], ['Unit', 'unit'], ['Route', 'route'], ['Frequency', 'frequency'],
+    ['DoseAmount', 'amount'], ['Unit', 'unit'], ['Route', 'route'], ['Frequency', 'frequency'], ['FrequencyCode', 'frequency'],
     ['ProductStrength', 'productStrength'], ['UnquotedStrength', 'productStrength'],
     ['ProductForm', 'doseForm'], ['UnquotedForm', 'doseForm']
 ]);

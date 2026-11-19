@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import { createHash } from 'node:crypto';
-import { GrammarUtils } from 'langium';
 import { searchOptions } from 'clinical-dsl-language';
-import { parseClinicalDocument } from './context-help.js';
+import { bindingAt, regimenEdits, validDraftDose, validDraftFrequency } from './regimen-edits.js';
 
 interface Acceptance {
     uri: string;
@@ -20,20 +19,44 @@ interface CanadianProduct {
     routes: string[];
 }
 
-function bindingAt(text: string, positionOrAlias: number | string, release: string) {
-    const matches = parseClinicalDocument(text).medication.filter(med => {
-        const node = med.$cstNode;
-        return node && (typeof positionOrAlias === 'string' ? med.name === positionOrAlias :
-            node.offset <= positionOrAlias && positionOrAlias <= node.end);
+interface RegimenSuggestion {
+    dose: string;
+    frequency: string;
+    page: number;
+    context: string;
+    evidence: string;
+}
+
+function regimenSuggestion(value: unknown): value is RegimenSuggestion {
+    if (!record(value)) return false;
+    return typeof value.dose === 'string' && validDraftDose(value.dose) &&
+        typeof value.frequency === 'string' && validDraftFrequency(value.frequency) &&
+        typeof value.page === 'number' && Number.isSafeInteger(value.page) && value.page > 0 &&
+        typeof value.context === 'string' && !!value.context.trim() &&
+        typeof value.evidence === 'string' && !!value.evidence.trim();
+}
+
+async function fillRegimen(editor: vscode.TextEditor, binding: Parameters<typeof regimenEdits>[1],
+    version: number, suggestions: unknown, routes: readonly string[]): Promise<{ applied?: RegimenSuggestion, note?: string }> {
+    // Older Scala services can still open their PDF without supplying any drafts.
+    if (suggestions === undefined) return {};
+    if (!Array.isArray(suggestions) || suggestions.length !== 1 || !regimenSuggestion(suggestions[0])) {
+        return { note: 'No unambiguous dose and frequency could be extracted for this presentation. Review the PDF for dosing.' };
+    }
+    const draft = suggestions[0];
+    const document = editor.document;
+    // Even when the RxNorm binding survives an edit, the clinician may have just
+    // removed or changed a dosing field while the PDF was downloading.
+    if (document.version !== version) return { note: 'The document changed during lookup. Your fields were preserved.' };
+    const edits = regimenEdits(document.getText(), binding, draft.dose, draft.frequency, routes);
+    if (!edits) return { note: 'The monograph pair could not be added alongside the existing Medication fields.' };
+    if (!edits.length) return { note: 'The existing dose and frequency were kept. Review them for the selected product.' };
+    const success = await editor.edit(builder => {
+        for (const edit of edits) {
+            builder.replace(new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)), edit.text);
+        }
     });
-    const med = matches.length === 1 ? matches[0] : undefined;
-    if (!med?.$cstNode || !med.rxcui || !/^[1-9]\d{0,19}$/.test(med.rxcui)) return undefined;
-    if (['rxcui', 'productName', 'rxnormRelease'].some(field =>
-        GrammarUtils.findNodesForProperty(med.$cstNode, field).length > 1)) return undefined;
-    // Older files may pin the release and ID without writing the product label.
-    if ((med.productName === undefined ? med.rxnormRelease !== release : !med.productName.trim()) ||
-        (med.rxnormRelease !== undefined && med.rxnormRelease !== release)) return undefined;
-    return { alias: med.name, rxcui: med.rxcui, display: med.productName };
+    return success ? { applied: draft } : { note: 'The editor could not apply the draft. You can review the source PDF.' };
 }
 
 function candidate(value: unknown): value is CanadianProduct {
@@ -98,11 +121,12 @@ export function registerMonographs(context: vscode.ExtensionContext): void {
         }
         const { alias, rxcui } = bound;
         if (expected && (rxcui !== expected.rxcui || bound.display !== expected.display)) return;
-        let version = document.version;
+        const initialVersion = document.version;
+        let version = initialVersion;
         const cancellation = new vscode.CancellationTokenSource();
         previous = cancellation;
         const current = () => {
-            if (cancellation.token.isCancellationRequested || document.isClosed || vscode.window.activeTextEditor !== editor) return false;
+            if (cancellation.token.isCancellationRequested || !vscode.workspace.isTrusted || document.isClosed || vscode.window.activeTextEditor !== editor) return false;
             if (document.version === version) return true;
             // The download can outlive edits to dose, frequency or a separate declaration.
             const updated = bindingAt(document.getText(), alias, options.release);
@@ -171,17 +195,32 @@ export function registerMonographs(context: vscode.ExtensionContext): void {
             const pdf = signedPdfUrl(options.url, info.pdfPath, info.sha256, params);
             const dosagePage = typeof info.dosagePage === 'number' && Number.isSafeInteger(info.dosagePage) && info.dosagePage > 0
                 ? info.dosagePage : undefined;
-            if (expected) {
-                const button = dosagePage ? 'Open dosage section' : 'Open PDF';
-                const revision = typeof info.revision === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(info.revision)
-                    ? `, revised ${info.revision}` : '';
+            const { applied, note } = await fillRegimen(editor, { ...bound, release: options.release }, initialVersion, info.regimenSuggestions, choice.routes);
+            if (!current()) return;
+            const revision = typeof info.revision === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(info.revision)
+                ? `, revised ${info.revision}` : '';
+            const product = `${choice.brandName} (DIN ${choice.din}${revision})`;
+            const page = applied?.page ?? dosagePage;
+            const button = page ? 'Open dosage section' : 'Open PDF';
+            if (applied) {
+                const evidenceAction = 'Read source passage';
+                const message = `Editable dose and frequency for ${alias}: ${applied.dose}, ${applied.frequency}. ` +
+                    `Health Canada monograph for ${product}, PDF p. ${page}. ${applied.context}. ${applied.evidence}`;
+                const action = await vscode.window.showInformationMessage(message, button, evidenceAction);
+                if (!current()) return;
+                if (action === evidenceAction) {
+                    const openPdf = await vscode.window.showInformationMessage(`Source passage for ${product}, PDF p. ${page}`,
+                        { modal: true, detail: applied.context + '\n\n' + applied.evidence }, button);
+                    if (openPdf !== button || !current()) return;
+                } else if (action !== button) return;
+            } else if (expected) {
                 const action = await vscode.window.showInformationMessage(
-                    `Health Canada monograph for ${choice.brandName} (DIN ${choice.din}${revision}).`, button);
+                    `Health Canada monograph for ${product}.` + (note ? ' ' + note : ''), button);
                 if (action !== button || !current()) return;
             }
             // openExternal forwards a remote loopback URL to the browser. The preview
             // token permits a rewritten Host for this exact cached document.
-            if (dosagePage) pdf.hash = 'page=' + dosagePage;
+            if (page) pdf.hash = 'page=' + page;
             if (!await vscode.env.openExternal(vscode.Uri.parse(pdf.toString()))) throw new Error('Unable to open the cached PDF.');
         } catch (error) {
             if (current()) await vscode.window.showWarningMessage('Health Canada monograph: ' +
