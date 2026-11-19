@@ -51,7 +51,7 @@ export async function harness(t, options = {}) {
     const uri = 'file:///workspace/example.clinical';
     let text = `Medication Morning: product "${bound.display}" rxcui "${bound.rxcui}" dose 5mg route PO frequency PRN`;
     const document = { uri: { toString: () => uri }, version: 1, languageId: 'clinical-dsl',
-        getText: () => text, offsetAt: () => 14, positionAt: offset => offset };
+        getText: () => text, offsetAt: () => text.indexOf('Medication ') + 14, positionAt: offset => offset };
     const edit = value => { document.version++; text = value; };
     const config = { get: (key, fallback) => key === 'searchUrl' ? origin : fallback };
     const vscode = {

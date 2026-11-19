@@ -80,6 +80,7 @@ test('reopening uses the service label for an earlier release-pinned binding and
     assert.match(h.notices.at(-1), /Place the cursor/);
 });
 
+const marker = `// @monograph Morning ${bound.rxcui} ${release} 00012346 ${'b'.repeat(64)}\n`;
 const suggestion = { dose: '20 mg', frequency: 'Q4-6H PRN', page: 16,
     context: 'Example tablets; adult population; maximum stated in the source.',
     evidence: 'Synthetic PDF fixture: 20 mg every 4 to 6 hours as required.' };
@@ -90,7 +91,7 @@ test('a selected presentation fills editable fields immediately and offers the e
         noticeAction: (_message, buttons) => buttons.includes('Read source passage') ? 'Read source passage' : buttons[0] });
     h.edit(selected + ' route PO');
     await h.accept();
-    assert.equal(h.document.getText(), selected + ' route PO dose 20 mg frequency 4-6H PRN');
+    assert.equal(h.document.getText(), marker + selected + ' route PO dose 20 mg frequency 4-6H PRN');
     assert.equal(h.editBatches.length, 1);
     assert.equal(h.picks.length, 1, 'the DIN picker is the only selection');
     assert.match(h.notices[0], /PDF p\. 16/);
@@ -109,7 +110,7 @@ test('refusing optional source preview still leaves both fields in the document'
     const h = await harness(t, { info: { regimenSuggestions: [suggestion] }, noticeAction: () => undefined });
     h.edit(selected);
     await h.accept();
-    assert.equal(h.document.getText(), selected + ' dose 20 mg frequency 4-6H PRN');
+    assert.equal(h.document.getText(), marker + selected + ' dose 20 mg frequency 4-6H PRN');
     assert.equal(h.opened.length, 0);
 });
 
@@ -117,13 +118,13 @@ test('auto-fill completes only a compatible partially written order', async t =>
     const h = await harness(t, { info: { regimenSuggestions: [{ ...suggestion, dose: '10 mg', frequency: 'Q8H' }] } });
     h.edit(selected + ' dose 10mg');
     await h.accept();
-    assert.equal(h.document.getText(), selected + ' dose 10mg frequency 8H');
+    assert.equal(h.document.getText(), marker + selected + ' dose 10mg frequency 8H');
     h.edit(selected + ' dose 3mg');
     await h.reopen();
-    assert.equal(h.document.getText(), selected + ' dose 3mg');
+    assert.equal(h.document.getText(), marker + selected + ' dose 3mg');
     h.edit(selected + ' route IV');
     await h.accept();
-    assert.equal(h.document.getText(), selected + ' route IV');
+    assert.equal(h.document.getText(), marker + selected + ' route IV');
 });
 
 test('manual edits during lookup, missing evidence and a rejected editor transaction produce no dose draft', async t => {
@@ -138,8 +139,41 @@ test('manual edits during lookup, missing evidence and a rejected editor transac
         const h = await harness(t, { info: { regimenSuggestions: [suggestion] }, ...overrides });
         h.edit(selected);
         await h.accept();
-        assert.equal(h.editBatches.length, 0);
+        assert.equal(h.editBatches.length, overrides.rejectEdit ? 0 : 1);
+        if (h.editBatches.length) assert.ok(h.document.getText().startsWith(marker));
         assert.doesNotMatch(h.document.getText(), / dose | frequency /);
         assert.ok(h.opened[0]);
     }
+});
+
+test('a saved source supplies the exact DIN in another workspace for an entirely manual order', async t => {
+    const h = await harness(t);
+    const text = marker.replace('00012346', '00012345') + selected + ' dose 7 mg frequency 6H';
+    h.edit(text);
+    await h.accept();
+    assert.equal(h.picks.length, 0);
+    assert.equal(h.requests.at(-1).query.din, '00012345');
+    assert.equal(h.document.getText(), text);
+    assert.equal(h.editBatches.length, 0);
+});
+
+test('a new PDF revision replaces the reference only after explicit acceptance and retains manual doses', async t => {
+    const older = marker.replace('b'.repeat(64), 'c'.repeat(64));
+    const fields = selected + ' dose 7 mg frequency 6H';
+    for (const update of [false, true]) {
+        const h = await harness(t, { noticeAction: (_message, options) => update && options.includes('Use revised monograph') ? 'Use revised monograph' : undefined });
+        h.edit(older + fields);
+        await h.accept();
+        assert.equal(h.document.getText(), (update ? marker : older) + fields);
+        assert.equal(h.editBatches.length, update ? 1 : 0);
+    }
+});
+
+test('a concurrent source change during download cannot overwrite a different confirmed DIN', async t => {
+    const other = marker.replace('00012346', '00012345');
+    const h = await harness(t, { duringPost: ({ edit }) => edit(other + selected) });
+    h.edit(selected);
+    await h.accept();
+    assert.equal(h.document.getText(), other + selected);
+    assert.equal(h.editBatches.length, 0);
 });

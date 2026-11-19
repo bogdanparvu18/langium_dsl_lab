@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { monographIssueRange, readMonographSource, type Medication } from 'clinical-dsl-language';
 import { parseClinicalDocument } from './context-help.js';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -12,6 +13,17 @@ const PASSWORD = 'clinical-dsl.rxnorm.setPassword';
 interface Position { line: number; character: number; offset: number }
 interface Concept { rxcui: string; display: string; tty: string; release?: string }
 interface ProductBinding { rxcui: string; display?: string; release: string }
+interface MonographSource { din: string; sha256: string }
+interface MonographIssue { field: 'dose' | 'frequency' | 'source'; message: string }
+interface MonographValidation {
+    status: 'withinMonograph' | 'outsideMonograph' | 'unverified';
+    din?: string;
+    sha256?: string;
+    page?: number;
+    context?: string;
+    evidence?: string;
+    issues: MonographIssue[];
+}
 interface Mention {
     id: string;
     orderId: string;
@@ -20,9 +32,15 @@ interface Mention {
     productStrength?: string;
     doseForm?: string;
     productBinding?: ProductBinding;
+    dose: { amount: number; unit: string };
+    frequency: string;
+    route: string;
+    monographSource?: MonographSource;
     source: { uri: string; start: Position; end: Position; text: string };
 }
 interface Request {
+    schemaVersion: string;
+    policyVersion: string;
     document: { uri: string; text: string };
     mentions: Mention[];
 }
@@ -34,6 +52,7 @@ interface Resolution {
     productEvidence?: Record<string, unknown> | null;
     ingredients: { concept: Concept }[];
     diagnostics: string[];
+    monographValidation?: MonographValidation;
     candidates?: { concept: Concept }[];
 }
 interface Report {
@@ -83,8 +102,17 @@ function parseJson<T>(text: string): T {
 }
 
 /** The bridge is installed separately. Check the saved DSL before accepting its bindings. */
-function checkExportBindings(request: Request, release: string): void {
+function checkExportBindings(request: Request, release: string) {
     const model = parseClinicalDocument(request.document.text);
+    const plans = new Map(model.plan.map(plan => [plan.name.toLowerCase(), plan]));
+    const shown = new Map(model.display.map(statement => {
+        const plan = plans.get(statement.plan.$refText.toLowerCase());
+        return [plan?.name, plan?.medication.$refText.toLowerCase()];
+    }));
+    if (!shown.size || shown.size !== request.mentions.length || new Set(request.mentions.map(m => m.orderId)).size !== shown.size ||
+        request.mentions.some(m => shown.get(m.orderId) !== m.originalText.toLowerCase())) {
+        throw new Error('The exporter did not preserve every shown plan and its medication. Update the Scala bridge and retry.');
+    }
     const declarations = new Map(model.medication.map(medication => [medication.$cstNode?.offset, medication]));
     for (const mention of request.mentions) {
         const medication = declarations.get(mention.source.start.offset);
@@ -94,10 +122,23 @@ function checkExportBindings(request: Request, release: string): void {
             (binding && binding.release !== (medication.rxnormRelease ?? release))) {
             throw new Error('The RxNorm exporter did not preserve the medication selection. Update the Scala bridge and retry.');
         }
+        const selected = readMonographSource(medication);
+        if (selected.status === 'invalid') throw new Error(selected.message);
+        const source = selected.status === 'selected' ? selected.source : undefined;
+        if (source?.din !== mention.monographSource?.din || source?.sha256 !== mention.monographSource?.sha256 ||
+            (source && (source.release !== release || request.schemaVersion !== '3' ||
+                request.policyVersion !== 'explicit-monograph-v1'))) {
+            throw new Error('The exported monograph source differs from the saved Medication. Check the Scala bridge and configured release.');
+        }
+        if (medication.amount !== mention.dose?.amount || medication.unit !== mention.dose?.unit ||
+            medication.frequency !== mention.frequency || medication.route !== mention.route) {
+            throw new Error('The exporter did not preserve the dose, route and frequency in the saved Medication.');
+        }
     }
+    return declarations;
 }
 
-function checkReport(text: string, request: Request, release: string): Report {
+function checkReport(text: string, request: Request, release: string, strict: boolean): Report {
     const report = parseJson<Report>(text);
     if (report.schemaVersion !== '2' || report.terminologyRelease !== release ||
         typeof report.terminologyScope !== 'string' || typeof report.snapshotFingerprint !== 'string' ||
@@ -118,10 +159,34 @@ function checkReport(text: string, request: Request, release: string): Report {
             !Array.isArray(result.ingredients) || !Array.isArray(result.diagnostics)) {
             throw new Error('Scala returned an inconsistent resolution report.');
         }
+        if (result.mention.monographSource?.din !== expected.monographSource?.din ||
+            result.mention.monographSource?.sha256 !== expected.monographSource?.sha256 ||
+            result.mention.dose?.amount !== expected.dose.amount || result.mention.dose?.unit !== expected.dose.unit ||
+            result.mention.frequency !== expected.frequency || result.mention.route !== expected.route) {
+            throw new Error('The Scala report does not match the source, dose, route or frequency that was exported.');
+        }
+        const check = result.monographValidation;
+        if (expected.productBinding || strict) {
+            const pinned = expected.monographSource;
+            if (!check || !['withinMonograph', 'outsideMonograph', 'unverified'].includes(check.status) ||
+                check.din !== pinned?.din || check.sha256 !== pinned?.sha256 ||
+                !Array.isArray(check.issues) || check.issues.some(issue => !issue ||
+                    !['dose', 'frequency', 'source'].includes(issue.field) || typeof issue.message !== 'string' || !issue.message.trim()) ||
+                (check.status === 'withinMonograph' ? check.issues.length !== 0 : check.issues.length === 0) ||
+                (check.status !== 'unverified' && (!pinned || !Number.isSafeInteger(check.page) || check.page! < 1 ||
+                    typeof check.context !== 'string' || !check.context.trim() || typeof check.evidence !== 'string' || !check.evidence.trim()))) {
+                throw new Error('Scala did not return a matching monograph check for the selected product. Update the Scala service and retry.');
+            }
+        } else if (check) {
+            throw new Error('Scala returned a monograph check for a medication without a selected product.');
+        }
         if (result.status === 'resolved' && (!result.initialConcept ||
             !/^\d+$/.test(result.initialConcept.rxcui) ||
             typeof result.initialConcept.display !== 'string' || typeof result.initialConcept.tty !== 'string')) {
             throw new Error('A resolved medication has no valid RxNorm concept.');
+        }
+        if (check && check.status !== 'unverified' && result.status !== 'resolved') {
+            throw new Error('Scala reported a monograph check for a product that was not resolved.');
         }
         if (expected.productBinding && result.status === 'resolved' &&
             (expected.productBinding.release !== release ||
@@ -134,6 +199,25 @@ function checkReport(text: string, request: Request, release: string): Report {
         remaining.delete(expected.id);
     }
     return report;
+}
+
+function monographError(resolution: Resolution, strict: boolean): boolean {
+    const status = resolution.monographValidation?.status;
+    return status === 'outsideMonograph' || (status === 'unverified' && (strict || !!resolution.mention.monographSource));
+}
+
+function monographDiagnostics(check: MonographValidation, medication: Medication | undefined, fallback: vscode.Range,
+    severity: vscode.DiagnosticSeverity): vscode.Diagnostic[] {
+    const citation = check.din ? ` DIN ${check.din}${check.page ? `, PDF p. ${check.page}` : ''}.` : '';
+    return check.issues.map(issue => {
+        const range = medication && monographIssueRange(medication, issue.field);
+        const target = range ? new vscode.Range(range.start.line, range.start.character,
+            range.end.line, range.end.character) : fallback;
+        const diagnostic = new vscode.Diagnostic(target, issue.message + citation, severity);
+        diagnostic.source = 'Health Canada / Scala';
+        diagnostic.code = 'MONOGRAPH_' + issue.field.toUpperCase();
+        return diagnostic;
+    });
 }
 
 /** UI orchestration only. Langium validates/export AST; Scala owns terminology resolution. */
@@ -159,8 +243,8 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
 
     function runProcess(
         executable: string, args: string[], cwd: string, env: NodeJS.ProcessEnv,
-        timeoutMs: number, label: string
-    ): Promise<void> {
+        timeoutMs: number, label: string, allowFailureReport = false
+    ): Promise<number> {
         output.appendLine(`\n[${label}]`);
         return new Promise((resolve, reject) => {
             const child = spawn(executable, args, { cwd, env, shell: false, windowsHide: true });
@@ -177,8 +261,8 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
             child.once('close', code => {
                 clean();
                 if (timedOut) reject(new Error(`${label}: timeout. See Output > Clinical DSL RxNorm.`));
-                else if (code !== 0) reject(new Error(`${label}: exit ${code}. See Output > Clinical DSL RxNorm.`));
-                else resolve();
+                else if (code === null || (code !== 0 && !allowFailureReport)) reject(new Error(`${label}: exit ${code}. See Output > Clinical DSL RxNorm.`));
+                else resolve(code);
             });
         });
     }
@@ -243,17 +327,24 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                         vscode.Uri.parse(request.document.uri).toString() !== document.uri.toString()) {
                         throw new Error('The source file changed during AST export. Save it and run again.');
                     }
-                    checkExportBindings(request, release);
+                    const declarations = checkExportBindings(request, release);
                     const conflictingBinding = request.mentions.find(mention =>
                         mention.productBinding && mention.productBinding.release !== release);
                     if (conflictingBinding?.productBinding) {
                         throw new Error(`Selected product ${conflictingBinding.productBinding.rxcui} uses RxNorm ${conflictingBinding.productBinding.release}, but the configured release is ${release}. Select a product from the configured release or change the configuration.`);
                     }
-                    await runProcess(java, ['-Xmx2G', '-Dsbt.supershell=false', '-Dsbt.log.noformat=true',
-                        '-jar', launcher, `run resolve ${sbtPath(input)} ${sbtPath(result)}`],
-                    scalaRoot, env, timeout, 'Scala / PostgreSQL resolve');
+                    const strict = manual && request.mentions.some(mention => mention.productBinding);
+                    const exitCode = await runProcess(java, ['-Xmx2G', '-Dsbt.supershell=false', '-Dsbt.log.noformat=true',
+                        '-jar', launcher, `run resolve ${sbtPath(input)} ${sbtPath(result)}${strict ? ' --require-monograph' : ''}`],
+                    scalaRoot, env, timeout, 'Scala / PostgreSQL resolve', true);
                     if (!current()) return;
-                    const report = checkReport(await readFile(result, 'utf8'), request, release);
+                    const report = checkReport(await readFile(result, 'utf8').catch(error => {
+                        if (exitCode !== 0) throw new Error(`Scala / PostgreSQL resolve: exit ${exitCode}. See Output > Clinical DSL RxNorm.`);
+                        throw error;
+                    }), request, release, strict);
+                    if (exitCode !== 0 && !report.resolutions.some(r => monographError(r, strict))) {
+                        throw new Error(`Scala / PostgreSQL resolve: exit ${exitCode}. See Output > Clinical DSL RxNorm.`);
+                    }
                     // The editor can change while the result file is being read.
                     if (!current()) return;
                     const items: vscode.Diagnostic[] = [];
@@ -269,7 +360,11 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                             : status === 'unresolved' ? `medication unknown: ${mention.originalText}`
                             : status === 'productNotFound' ? `product not found: ${mention.originalText}`
                             : `${mention.originalText}: ${status}`;
-                        summaries.push(summary);
+                        const check = resolution.monographValidation;
+                        const supplement = check?.status === 'outsideMonograph' ? ' — dose or frequency outside the monograph'
+                            : check?.status === 'unverified' ? ' — dose and frequency unverified'
+                            : check?.status === 'withinMonograph' ? ' — dose and frequency within the monograph passage' : '';
+                        summaries.push(summary + supplement);
                         const range = new vscode.Range(mention.source.start.line, mention.source.start.character,
                             mention.source.end.line, mention.source.end.character);
                         const ingredients = resolution.ingredients.map(i => `${i.concept.display} (${i.concept.rxcui}, ${i.concept.tty})`).join(', ');
@@ -283,6 +378,13 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                         if (status === 'unresolved') item.code = 'MEDICATION_UNKNOWN';
                         if (status === 'productNotFound') item.code = 'PRODUCT_NOT_FOUND';
                         items.push(item);
+                        if (check) {
+                            const severity = monographError(resolution, strict) ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning;
+                            const issues = monographDiagnostics(check, declarations.get(mention.source.start.offset), range, severity);
+                            items.push(...issues);
+                            for (const issue of issues) output.appendLine(issue.message);
+                            if (check.evidence) output.appendLine(`DIN ${check.din}, page ${check.page}. ${check.context}. ${check.evidence}`);
+                        }
                         output.appendLine([mention.originalText, mention.role, status, concept?.rxcui ?? '-',
                             concept?.display ?? '-', concept?.tty ?? '-'].join('\t'));
                     }
@@ -290,11 +392,12 @@ export function registerRxNorm(context: vscode.ExtensionContext): RxNormPreviewP
                     publish({ kind: 'complete', report });
                     const summary = [...new Set(summaries)].slice(0, 3).join('; ') +
                         (summaries.length > 3 ? '; see Output for all medications' : '');
-                    const show = report.resolutions.every(r => r.status === 'resolved')
-                        ? vscode.window.showInformationMessage
-                        : report.resolutions.some(r => ['unresolved', 'productNotFound'].includes(r.status))
-                            ? vscode.window.showErrorMessage : vscode.window.showWarningMessage;
-                    void show(`RxNorm: ${summary}`, 'Show details').then(choice => {
+                    const hasError = items.some(item => item.severity === vscode.DiagnosticSeverity.Error);
+                    const hasWarning = items.some(item => item.severity === vscode.DiagnosticSeverity.Warning);
+                    const show = hasError ? vscode.window.showErrorMessage
+                        : hasWarning ? vscode.window.showWarningMessage : vscode.window.showInformationMessage;
+                    const scope = manual && !strict ? ' Terminology lookup only. Select an exact product and its Canadian monograph to check dosing.' : '';
+                    void show(`RxNorm: ${summary}${scope}`, 'Show details').then(choice => {
                         if (choice) output.show(true);
                     });
                 });

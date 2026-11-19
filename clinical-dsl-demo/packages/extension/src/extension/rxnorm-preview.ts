@@ -45,6 +45,7 @@ export function withRxNormPreview(json: string, state: RxNormPreviewState): stri
             } else {
                 rxnorm = { ...metadata, code: 'INVALID_MEDICATION_ROLE', error: 'Medication does not match the required semantic role.' };
             }
+            if (resolution.monographValidation) rxnorm.monographValidation = resolution.monographValidation;
             break;
         }
     }
@@ -58,5 +59,7 @@ export function rxnormPreviewTitle(state: RxNormPreviewState): string {
         return 'Preview JSON — medication unknown';
     }
     if (state.kind === 'complete' && state.resolution.status === 'productNotFound') return 'Preview JSON — product not found';
+    if (state.kind === 'complete' && state.resolution.monographValidation?.status === 'outsideMonograph') return 'Preview JSON — regimen outside monograph';
+    if (state.kind === 'complete' && state.resolution.monographValidation?.status === 'unverified') return 'Preview JSON — regimen unverified';
     return 'Preview JSON';
 }

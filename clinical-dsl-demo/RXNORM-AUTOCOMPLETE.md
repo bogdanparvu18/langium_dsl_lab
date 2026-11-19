@@ -85,11 +85,28 @@ For example, type `Medication Dimineata: tyle`, accept **acetaminophen 500 MG Or
 Medication Dimineata: product "acetaminophen 500 MG Oral Tablet [Tylenol]" rxcui "209459" dose 500 mg frequency 4-6H PRN
 ```
 
-Here `4-6H PRN` means every four to six hours as needed. The 500 mg dose is the lower end of the range in the immediate-release instructions for adults and children aged 12 and over. The same passage gives single-dose and daily limits. To enter a different frequency, edit the field directly, for example to `frequency 6H` for a fixed six-hour interval. Add the intended route before resolving a complete plan. [Canadian Tylenol monograph, page 14](https://pdf.hres.ca/dpd_pm/00076531.PDF#page=14).
+Here `4-6H PRN` means every four to six hours as needed. The 500 mg dose is the lower end of the range in the immediate-release instructions for adults and children aged 12 and over. The same passage gives single-dose and daily limits. An edit to `frequency 6H PRN` stays within that passage. Removing `PRN` changes the schedule to regular six-hour administration and produces a frequency error. Add the intended route before resolving a complete plan. [Canadian Tylenol monograph, page 14](https://pdf.hres.ca/dpd_pm/00076531.PDF#page=14).
 
 A PDF can cover multiple strengths and populations. When there is no unambiguous supported passage, the editor leaves the fields available for manual entry. A dose or frequency the clinician has already entered is preserved. If only one field exists, the editor fills its counterpart only when the existing value agrees with the same source instruction. It also skips insertion if the document changes during lookup.
 
 To reopen the PDF, put the cursor in the Medication declaration and run **Clinical DSL: Open Health Canada Product Monograph** from the Command Palette. For saved documents, the extension remembers the confirmed DIN for that declaration, RxNorm product and release in the current VS Code workspace. If multiple presentations are available, the command also lets you change the DIN. PDF reuse works offline from Health Canada while the local Scala service and databases are running. When a Canadian match or electronic monograph is unavailable, the editor reports this and keeps the DSL text.
+
+## Checking manual dose and frequency edits
+
+The editor writes a generated `// @monograph` comment above the Medication when a presentation is confirmed. It records the alias, RxCUI, RxNorm release, DIN and PDF checksum. Keep that comment with the declaration when copying a prescription. On another workstation, use the same database release and verified PDF. Use **Open Health Canada Product Monograph** to restore a missing source or review a newer PDF revision.
+
+Langium asks the local Scala service to compare each edit with the applicable passage. An error underlines the affected value and identifies the source. The two fields are checked independently. For the Tylenol example above:
+
+| Edit | Result for the selected passage |
+| --- | --- |
+| `dose 1 g frequency 6H PRN` | Both values fit the stated ranges. |
+| `dose 1500 mg frequency 6H PRN` | Dose error. |
+| `dose 500 mg frequency 6H` | Frequency error because the passage requires as-needed use. |
+| `dose 1500 mg frequency 8H PRN` | Both fields have errors. |
+
+The limits refer to the selected source passage. For as-needed orders the report carries the published 24-hour maximum. Actual intake, including other acetaminophen products, is outside this check. [Canadian Tylenol monograph, page 14](https://pdf.hres.ca/dpd_pm/00076531.PDF#page=14).
+
+When the source is missing, superseded or unsupported, the editor reports that it could not check the regimen. For a bound product, the explicit **Resolve Medications with RxNorm** command requires a verifiable source. Scala checks the supplied values against the verified local PDF again and records the outcome in its report. Clinical approval remains with the clinician.
 
 ## Identity and validation
 
@@ -121,6 +138,6 @@ The search response is a candidate list. Acceptance writes a binding into the us
 }
 ```
 
-The example shows the exported mention. The source preview shows the RxCUI and display name as written. Export supplies the configured release and the report records the release used for verification. Requests with at least one binding use `schemaVersion: "2"` and `policyVersion: "explicit-product-v1"`. Documents without bindings keep `schemaVersion: "1"` and `policyVersion: "exact-v1"`. The Scala report remains schema `2` and echoes the binding with the mention. Both repository changes are required for bound documents.
+The example shows the exported mention. The source preview shows the RxCUI and display name as written. Export supplies the configured release and the report records the release used for verification. Requests with a confirmed monograph carry `monographSource` on the mention and use schema `3` with policy `explicit-monograph-v1`. Requests with an RxNorm binding alone use schema `2` and policy `explicit-product-v1`. Documents without bindings keep `schemaVersion: "1"` and `policyVersion: "exact-v1"`. The Scala report remains schema `2` and echoes the binding with the mention. Both repository changes are required for bound documents.
 
 The `product` field holds the full display text. `Medication.name` supplies the identifier referenced by `Plan.prescribe`. Patient syntax and the existing named Plan relationships are unchanged.
