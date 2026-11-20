@@ -156,7 +156,8 @@ test('a real completion invokes the monograph command for the bound alias after 
     assert.deepEqual(editor.requests.map(entry => entry.path), ['/products', '/canadian-products', '/monograph']);
     assert.equal(editor.opened[0].searchParams.get('din'), '00012346');
     assert.equal(editor.opened[0].hash, '#page=14');
-    assert.equal(editor.document.getText(), applied);
+    assert.equal(editor.document.getText().split('\n').slice(1).join('\n'), applied);
+    assert.match(editor.document.getText(), /^\/\/ @monograph MorningMedication /);
     assert.match(applied, /MorningMedication: 5 mg/);
 });
 

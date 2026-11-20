@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { createHash } from 'node:crypto';
-import { searchOptions } from 'clinical-dsl-language';
-import { bindingAt, regimenEdits, validDraftDose, validDraftFrequency } from './regimen-edits.js';
+import { searchOptions, type MonographSource } from 'clinical-dsl-language';
+import { bindingAt, confirmedSourceEdits, regimenEdits, validDraftDose, validDraftFrequency } from './regimen-edits.js';
 
 interface Acceptance {
     uri: string;
@@ -36,27 +36,40 @@ function regimenSuggestion(value: unknown): value is RegimenSuggestion {
         typeof value.evidence === 'string' && !!value.evidence.trim();
 }
 
-async function fillRegimen(editor: vscode.TextEditor, binding: Parameters<typeof regimenEdits>[1],
-    version: number, suggestions: unknown, routes: readonly string[]): Promise<{ applied?: RegimenSuggestion, note?: string }> {
-    // Older Scala services can still open their PDF without supplying any drafts.
-    if (suggestions === undefined) return {};
-    if (!Array.isArray(suggestions) || suggestions.length !== 1 || !regimenSuggestion(suggestions[0])) {
-        return { note: 'No unambiguous dose and frequency could be extracted for this presentation. Review the PDF for dosing.' };
-    }
-    const draft = suggestions[0];
+async function fillRegimen(editor: vscode.TextEditor, binding: NonNullable<ReturnType<typeof bindingAt>> & { release: string },
+    version: number, suggestions: unknown, routes: readonly string[], reference: MonographSource
+): Promise<{ applied?: RegimenSuggestion, note?: string }> {
     const document = editor.document;
-    // Even when the RxNorm binding survives an edit, the clinician may have just
-    // removed or changed a dosing field while the PDF was downloading.
-    if (document.version !== version) return { note: 'The document changed during lookup. Your fields were preserved.' };
-    const edits = regimenEdits(document.getText(), binding, draft.dose, draft.frequency, routes);
-    if (!edits) return { note: 'The monograph pair could not be added alongside the existing Medication fields.' };
-    if (!edits.length) return { note: 'The existing dose and frequency were kept. Review them for the selected product.' };
-    const success = await editor.edit(builder => {
+    const changed = document.version !== version;
+    const text = document.getText();
+    const edits = confirmedSourceEdits(text, binding, reference, changed ? binding.selection : undefined);
+    if (!edits) return { note: 'The selected Medication changed during lookup.' };
+
+    let applied: RegimenSuggestion | undefined;
+    let note: string | undefined;
+    if (changed) {
+        note = 'The document changed during lookup. Your entries were preserved and the confirmed source was recorded.';
+    } else if (Array.isArray(suggestions) && suggestions.length === 1 && regimenSuggestion(suggestions[0])) {
+        const draft = suggestions[0];
+        const fields = regimenEdits(text, binding, draft.dose, draft.frequency, routes);
+        if (fields?.length) {
+            edits.push(...fields);
+            applied = draft;
+        } else {
+            note = fields ? 'The existing dose and frequency were kept. Review them for the selected product.' :
+                'The monograph pair could not be added alongside the existing Medication fields.';
+        }
+    } else if (suggestions !== undefined) {
+        note = 'No unambiguous dose and frequency could be extracted for this presentation. Review the PDF for dosing.';
+    }
+    // Persist the reference even on a manually completed order. The reference and
+    // both draft fields are one editor transaction, including on first selection.
+    if (edits.length && !await editor.edit(builder => {
         for (const edit of edits) {
             builder.replace(new vscode.Range(document.positionAt(edit.start), document.positionAt(edit.end)), edit.text);
         }
-    });
-    return success ? { applied: draft } : { note: 'The editor could not apply the draft. You can review the source PDF.' };
+    })) return { note: 'The editor could not record this monograph. Reopen it to confirm the source for validation.' };
+    return { applied, note };
 }
 
 function candidate(value: unknown): value is CanadianProduct {
@@ -162,7 +175,9 @@ export function registerMonographs(context: vscode.ExtensionContext): void {
             const selectionKey = 'clinical-dsl.din.' + createHash('sha256').update(
                 JSON.stringify([uri, alias, options.url, options.release, rxcui, display])).digest('hex');
             const saved = document.isUntitled ? undefined : context.workspaceState.get<string>(selectionKey);
-            const remembered = items.find(item => item.din === saved);
+            const pinned = bound.selection.status === 'selected' && bound.selection.source.release === options.release
+                ? bound.selection.source : undefined;
+            const remembered = items.find(item => item.din === (pinned?.din ?? saved));
             let choice = (expected || items.length === 1) ? remembered : undefined;
             if (!choice) {
                 const choices = items.map(item => ({
@@ -177,25 +192,32 @@ export function registerMonographs(context: vscode.ExtensionContext): void {
                 if (!picked || !current()) return;
                 choice = picked.item;
             }
-            if (!document.isUntitled && saved !== choice.din) {
-                // Remember the clinician's product selection even if Health Canada is offline.
-                await context.workspaceState.update(selectionKey, choice.din);
-                if (!current()) return;
-            }
             params.set('din', choice.din);
             const resolve = new URL('/monograph', options.url);
             resolve.search = params.toString();
             const info = await json(resolve, 'POST', AbortSignal.any([abort.signal, AbortSignal.timeout(120_000)]));
             if (!current()) return;
             if (info.status === 'unavailable') {
-                await vscode.window.showInformationMessage(`Health Canada has no electronic monograph for ${choice.brandName} (DIN ${choice.din}).`);
+                const retained = pinned ? ` The existing source for DIN ${pinned.din} was retained.` : '';
+                await vscode.window.showInformationMessage(`Health Canada has no electronic monograph for ${choice.brandName} (DIN ${choice.din}).` + retained);
                 return;
             }
             if (info.status !== 'available') throw new Error('Invalid monograph response.');
             const pdf = signedPdfUrl(options.url, info.pdfPath, info.sha256, params);
             const dosagePage = typeof info.dosagePage === 'number' && Number.isSafeInteger(info.dosagePage) && info.dosagePage > 0
                 ? info.dosagePage : undefined;
-            const { applied, note } = await fillRegimen(editor, { ...bound, release: options.release }, initialVersion, info.regimenSuggestions, choice.routes);
+            const reference = { rxcui, release: options.release, din: choice.din, sha256: pdf.searchParams.get('sha256')! };
+            if (pinned?.din === reference.din && pinned.sha256 !== reference.sha256) {
+                const update = 'Use revised monograph';
+                const answer = await vscode.window.showInformationMessage(
+                    `Health Canada has a different PDF revision for DIN ${choice.din}. Use this revision to validate ${alias}?`, update);
+                if (answer !== update || !current()) return;
+            }
+            const { applied, note } = await fillRegimen(editor, { ...bound, release: options.release }, initialVersion,
+                info.regimenSuggestions, choice.routes, reference);
+            if (!document.isUntitled && saved !== choice.din && current()) {
+                await context.workspaceState.update(selectionKey, choice.din);
+            }
             if (!current()) return;
             const revision = typeof info.revision === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(info.revision)
                 ? `, revised ${info.revision}` : '';

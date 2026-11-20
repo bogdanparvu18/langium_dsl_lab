@@ -15,6 +15,20 @@ function errors(doc: Awaited<ReturnType<typeof read>>) {
 }
 
 describe('explicit RxNorm product identity', () => {
+    test('preserves the exact decimal dose sent for bound-product validation', async () => {
+        const order = (amount: string) =>
+            `Medication Alias: product "Demo tablet" rxcui "900001" dose ${amount}mg route PO frequency BID`;
+        for (const amount of ['0.1', '001.000', '1000.00000000000000', '0.00000001', '1000000000000000000000']) {
+            expect(errors(await read(order(amount)))).toEqual([]);
+        }
+        for (const amount of ['1000.00000000000001', '499.999999999999999', '9007199254740993']) {
+            const doc = await read(order(amount));
+            const diagnostic = doc.diagnostics?.find(d => d.code === 'monograph-dose-precision');
+            expect(diagnostic?.severity).toBe(1);
+            expect(doc.textDocument.getText(diagnostic!.range)).toBe(amount);
+        }
+    });
+
     test.each([
         `product "Demo tablet" rxcui "900001" ${required}`,
         `frequency bid RxCuI '900001', dose 10 MG, PrOdUcT 'Demo tablet' ROUTE po`,

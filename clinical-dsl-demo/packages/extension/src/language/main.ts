@@ -1,4 +1,4 @@
-import { DocumentState, GrammarAST, URI } from 'langium';
+import { AstUtils, DocumentState, GrammarAST, URI } from 'langium';
 import { startLanguageServer } from 'langium/lsp';
 import { NodeFileSystem } from 'langium/node';
 import {
@@ -33,6 +33,16 @@ function projectPlan(statement: DisplayPlan) {
     const medication = plan.medication.ref;
     if (!patient || !medication) {
         throw new Error(`Plan "${plan.name}" has an unresolved reference.`);
+    }
+    const medicationDocument = AstUtils.getDocument(medication);
+    const declaration = medication.$cstNode;
+    if (declaration && medicationDocument !== AstUtils.getDocument(statement)) {
+        const errors = (medicationDocument.diagnostics ?? []).filter(diagnostic => {
+            if (diagnostic.severity !== DiagnosticSeverity.Error || !String(diagnostic.code).startsWith('monograph-')) return false;
+            const offset = medicationDocument.textDocument.offsetAt(diagnostic.range.start);
+            return declaration.offset <= offset && offset < declaration.end;
+        });
+        if (errors.length) throw new Error(errors.map(error => error.message).join('\n'));
     }
     const age = Number(patient.age);
     const amount = Number(medication.amount);

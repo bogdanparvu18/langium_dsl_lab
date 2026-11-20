@@ -13,8 +13,8 @@ import vm from 'node:vm';
 import { build } from 'esbuild';
 
 const require = createRequire(import.meta.url);
-const source = fileURLToPath(new URL('../src/extension/rxnorm.ts', import.meta.url));
-const bundle = (await build({ entryPoints: [source], bundle: true, write: false,
+const extensionSource = fileURLToPath(new URL('../src/extension/rxnorm.ts', import.meta.url));
+const bundle = (await build({ entryPoints: [extensionSource], bundle: true, write: false,
     platform: 'node', format: 'cjs', external: ['vscode'] })).outputFiles[0].text;
 const previewSource = fileURLToPath(new URL('../src/extension/rxnorm-preview.ts', import.meta.url));
 const previewBundle = (await build({ entryPoints: [previewSource], bundle: true, write: false,
@@ -51,7 +51,11 @@ async function harness(options = {}) {
         ...(binding.display !== undefined ? [`product ${JSON.stringify(binding.display)}`] : []),
         ...(binding.release !== undefined ? [`rxnormRelease ${JSON.stringify(binding.release)}`] : [])
     ] : [];
-    const text = `medication ${medicationName}: ${[...fields, '1 mg route PO frequency PRN'].join(' ')}`;
+    const declaration = `medication ${medicationName}: ${[...fields, '1 mg route PO frequency PRN'].join(' ')}`;
+    const marker = options.source ? `// @monograph ${medicationName} ${binding.rxcui} ${binding.release ?? '2026-10-05'} ${options.source.din} ${options.source.sha256}\n` : '';
+    const text = marker + declaration + '\nPatient PatientOne: age 30, condition Demo' +
+        `\nPlan DemoPlan: prescribe ${medicationName} for PatientOne\nshow DemoPlan` +
+        (options.omitSecondPlan ? `\nPlan AlsoShown: prescribe ${medicationName} for PatientOne\nshow AlsoShown` : '');
     const document = { uri, version: 1, isDirty: false, isClosed: false,
         languageId: 'clinical-dsl', getText() { return this.text; }, text };
     await writeFile(uri.fsPath, text);
@@ -83,12 +87,17 @@ async function harness(options = {}) {
                     const documentText = await readFile(input, 'utf8');
                     const exportedBinding = Object.hasOwn(options, 'exportBinding') ? options.exportBinding :
                         binding && { ...binding, release: binding.release ?? configValues.release };
+                    const exportedSource = Object.hasOwn(options, 'exportSource') ? options.exportSource : options.source;
                     const mention = { id: `DemoPlan:${medicationName}`, orderId: 'DemoPlan', originalText: medicationName, role: 'medication',
                         ...(options.product ? { productStrength: '500 mg', doseForm: 'Oral Tablet' } : {}),
                         ...(exportedBinding ? { productBinding: exportedBinding } : {}),
-                        source: { uri: uri.toString(), start: { line: 0, character: 0, offset: 0 },
-                            end: { line: 0, character: text.length, offset: text.length }, text } };
+                        ...(exportedSource ? { monographSource: exportedSource } : {}),
+                        dose: { amount: 1, unit: 'mg' }, route: 'PO', frequency: options.exportFrequency ?? 'PRN',
+                        source: { uri: uri.toString(), start: { line: marker ? 1 : 0, character: 0, offset: marker.length },
+                            end: { line: marker ? 1 : 0, character: declaration.length, offset: marker.length + declaration.length }, text: declaration } };
                     await writeFile(args[args.indexOf('--output') + 1], JSON.stringify({
+                        schemaVersion: exportedSource ? '3' : (exportedBinding ? '2' : '1'),
+                        policyVersion: exportedSource ? 'explicit-monograph-v1' : (exportedBinding ? 'explicit-product-v1' : 'exact-v1'),
                         document: { uri: uri.toString(), text: documentText }, mentions: [mention]
                     }));
                 } else {
@@ -96,14 +105,18 @@ async function harness(options = {}) {
                     startedJava();
                     await javaGate;
                     if (options.resolveFails) { child.stderr.write('PostgreSQL connection refused'); child.emit('close', 1); return; }
-                    const [, input, output] = /^run resolve "([^"]+)" "([^"]+)"$/.exec(args.at(-1));
+                    const [, input, output] = /^run resolve "([^"]+)" "([^"]+)"(?: --require-monograph)?$/.exec(args.at(-1));
                     const request = JSON.parse(await readFile(input, 'utf8'));
                     const status = options.status ?? (options.unresolved ? 'unresolved' : 'resolved');
                     const resolved = status === 'resolved';
+                    const check = Object.hasOwn(options, 'monograph') ? options.monograph : binding ? {status: 'unverified',
+                        issues: [{ field: 'source', message: 'Select a Canadian DIN and monograph.' }]} : undefined;
                     await writeFile(output, JSON.stringify({ schemaVersion: '2', terminologyRelease: options.wrongRelease ? 'other' : '2026-10-05',
                         terminologyScope: 'test-scope', snapshotFingerprint: 'test-fingerprint',
-                        resolutions: [{ mention: options.reportBinding
-                            ? { ...request.mentions[0], productBinding: options.reportBinding } : request.mentions[0], status,
+                        resolutions: [{ mention: { ...request.mentions[0],
+                            ...(options.reportBinding ? { productBinding: options.reportBinding } : {}),
+                            ...(options.reportFrequency ? { frequency: options.reportFrequency } : {}) }, status,
+                            monographValidation: check,
                             initialConcept: resolved ? { rxcui: '161', display: 'acetaminophen', tty: 'IN' } : null,
                             ...((options.product || options.binding) && resolved && !options.missingSelectedProduct ? { selectedProduct: {
                                 rxcui: options.wrongProductId ? '900002' : options.binding?.rxcui ?? '900001',
@@ -113,7 +126,7 @@ async function harness(options = {}) {
                                 productEvidence: { strength: { value: '500 MG', atui: 'synthetic-attribute' } } } : {}),
                             ingredients: [], diagnostics: [], candidates: [] }] }));
                 }
-                child.emit('close', 0);
+                child.emit('close', executable === java ? (options.javaExit ?? 0) : 0);
             } catch (error) { child.emit('error', error); }
         });
         return child;
@@ -210,6 +223,7 @@ test('manual resolve: subprocess arguments, password isolation, diagnostic and n
     assert.equal(h.processes.length, 2);
     assert.equal(h.processes[1].options.env.PGPASSWORD, 'private-test-password');
     assert.equal(h.processes[1].options.shell, false);
+    assert.match(h.notices.at(-1).message, /Terminology lookup only/);
     assert.match(h.notices.at(-1).message, /paracetamol: RxCUI 161 \| acetaminophen \| IN/);
     assert.equal(h.entries.get(h.document.uri.toString())[0].severity, 2);
     assert.match(h.logs.join(''), /paracetamol\tmedication\tresolved\t161\tacetaminophen\tIN/);
@@ -516,5 +530,60 @@ test('an older exporter cannot silently downgrade a visible product selection', 
         assert.equal(h.entries.size, 0);
         assert.match(h.notices.at(-1).message, /exporter/i);
         assert.equal(preview(h).medication.rxnorm.status, 'unavailable');
+    }
+});
+
+
+const source = { din: '00559407', sha256: 'b'.repeat(64) };
+const selected = { rxcui: '900001', display: 'Example tablet' };
+const passage = { ...source, page: 9, context: 'Immediate release, adults', evidence: 'Synthetic dose and interval, as needed.' };
+
+test('explicit final check reads the nonzero Scala report and marks both exact fields in Problems and Preview', async t => {
+    const issues = [{ field: 'dose', message: 'Dose outside the source range.' },
+        { field: 'frequency', message: 'Specify the source interval and PRN.' }];
+    const h = await harness({ source, binding: selected, javaExit: 1,
+        monograph: { ...passage, status: 'outsideMonograph', issues } });
+    t.after(() => h.cleanup());
+    await h.resolve();
+    assert.match(h.processes.at(-1).args.at(-1), / --require-monograph$/);
+    const fields = h.entries.get(h.document.uri.toString()).filter(issue => issue.source === 'Health Canada / Scala');
+    assert.deepEqual(fields.map(issue => issue.code).join(' '), 'MONOGRAPH_DOSE MONOGRAPH_FREQUENCY');
+    const line = h.document.text.split('\n')[1];
+    for (const [issue, literal] of fields.map((issue, i) => [issue, ['1 mg', 'PRN'][i]])) {
+        assert.equal(issue.severity, 0);
+        assert.deepEqual([...issue.range.values], [1, line.indexOf(literal), 1, line.indexOf(literal) + literal.length]);
+        assert.match(issue.message, /DIN 00559407, PDF p. 9/);
+    }
+    assert.equal(h.notices.at(-1).type, 'error');
+    assert.equal(preview(h).medication.rxnorm.monographValidation.status, 'outsideMonograph');
+    assert.match(rxnormPreviewTitle(h.rxnorm.getPreview(h.document, 'DemoPlan')), /outside monograph/);
+});
+
+test('an explicit check of an unpinned binding fails visibly while automatic terminology resolution shows a warning', async t => {
+    const h = await harness({ binding: selected });
+    t.after(() => h.cleanup());
+    await h.resolve();
+    assert.equal(h.notices.at(-1).type, 'error');
+    assert.match(h.notices.at(-1).message, /unverified/);
+    h.events.save(h.document);
+    await eventually(() => h.notices.length === 2);
+    assert.doesNotMatch(h.processes.at(-1).args.at(-1), /--require-monograph/);
+    assert.equal(h.notices.at(-1).type, 'warning');
+});
+
+test('only the current source and dose check can be reported as within the monograph', async t => {
+    const valid = { ...passage, status: 'withinMonograph', issues: [] };
+    const h = await harness({ binding: selected, source, monograph: valid });
+    t.after(() => h.cleanup());
+    await h.resolve();
+    assert.equal(preview(h).medication.rxnorm.monographValidation.page, 9);
+    assert.equal(h.notices.at(-1).type, 'info');
+    for (const options of [{ omitSecondPlan: true }, { exportSource: undefined }, { monograph: undefined }, { reportFrequency: 'QD' },
+        { monograph: { ...valid, sha256: '1'.repeat(64) } }, { javaExit: 1 }]) {
+        const stale = await harness({ binding: selected, source, monograph: valid, ...options });
+        t.after(() => stale.cleanup());
+        await stale.resolve();
+        assert.equal(preview(stale).medication.rxnorm.status, 'unavailable');
+        assert.notEqual(stale.notices.at(-1).type, 'info');
     }
 });

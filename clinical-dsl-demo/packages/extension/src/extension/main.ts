@@ -55,7 +55,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         'clinical-dsl', 'Clinical DSL', serverOptions,
         {
             documentSelector: [{ scheme: '*', language: 'clinical-dsl' }],
-            initializationOptions: () => ({ rxnormSearch: rxnormSearchConfiguration() })
+            initializationOptions: () => ({ rxnormSearch: rxnormSearchConfiguration(), monographValidation: vscode.workspace.isTrusted })
         }
     );
     client = languageClient;
@@ -65,7 +65,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(rxnorm.onDidChange(() => refresh.fire()));
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         if (started && event.affectsConfiguration('clinicalDsl.rxnorm')) {
-            void languageClient.sendNotification('clinical-dsl/configureRxNormSearch', rxnormSearchConfiguration());
+            const config = rxnormSearchConfiguration();
+            void languageClient.sendNotification('clinical-dsl/configureRxNormSearch', config);
+            void languageClient.sendNotification('clinical-dsl/configureMonographValidation', config);
+        }
+    }));
+
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
+        if (started && document.languageId === 'clinical-dsl') {
+            void languageClient.sendNotification('clinical-dsl/recheckMonograph', document.uri.toString());
         }
     }));
 

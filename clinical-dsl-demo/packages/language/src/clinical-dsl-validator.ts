@@ -1,6 +1,8 @@
 import { GrammarUtils, type ValidationAcceptor, type ValidationChecks } from 'langium';
 import type { ClinicalDslAstType, Medication, Patient, Model } from './generated/ast.js';
+import { MonographValidation } from './monograph-validation.js';
 import { normalizeFrequency } from './frequency.js';
+import { hasExactDoseValue } from './dose-precision.js';
 import type { ClinicalDslServices } from './clinical-dsl-module.js';
 import {
     DEMO_AMOUNT_OPTIONS
@@ -14,6 +16,8 @@ export function registerValidationChecks(services: ClinicalDslServices): void {
         Medication: [validator.checkMedicationFields, validator.checkMedicationAmount, validator.checkProductQualifiers, validator.checkProductBinding]
     };
     services.validation.ValidationRegistry.register(checks, validator);
+    const monographs = new MonographValidation(services);
+    services.validation.ValidationRegistry.register({ Medication: monographs.check }, monographs);
 }
 
 export class ClinicalDslValidator {
@@ -171,6 +175,10 @@ export class ClinicalDslValidator {
             accept('error', 'The amount must be a finite number greater than zero.', {
                 node: medication,
                 property: 'amount'
+            });
+        } else if (medication.rxcui && !hasExactDoseValue(medication)) {
+            accept('error', 'The dose would be rounded before monograph validation. Enter an amount that preserves its decimal value.', {
+                node: medication, property: 'amount', code: 'monograph-dose-precision'
             });
         }
     }

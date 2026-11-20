@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
+import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,7 +25,7 @@ await build({
 });
 after(() => rm(temporary, { recursive: true, force: true }));
 
-async function startServer(t) {
+async function startServer(t, initializationOptions) {
     const child = fork(serverFile, ['--node-ipc'], { silent: true, execArgv: [] });
     let output = '';
     child.stdout.on('data', chunk => { output += chunk; });
@@ -36,7 +37,8 @@ async function startServer(t) {
     });
     // Diagnostics are independently produced by Langium; getShowPlans must apply
     // them before projecting any plain JSON that a preview could display.
-    connection.onNotification('textDocument/publishDiagnostics', () => {});
+    const diagnostics = new Map();
+    connection.onNotification('textDocument/publishDiagnostics', message => diagnostics.set(message.uri, message.diagnostics));
     connection.onNotification('window/logMessage', () => {});
     connection.listen();
     t.after(async () => {
@@ -47,6 +49,7 @@ async function startServer(t) {
         processId: process.pid,
         rootUri: null,
         workspaceFolders: [],
+        initializationOptions,
         capabilities: {}
     });
     await connection.sendNotification('initialized', {});
@@ -79,7 +82,17 @@ async function startServer(t) {
         await ready;
     }
     const preview = (uri, version) => connection.sendRequest('clinical-dsl/getShowPlans', { uri, version });
-    return { update, preview };
+    async function recheck(uri) {
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { listeners.delete(listener); reject(new Error('No monograph recheck')); }, 5000);
+            const listener = message => {
+                if (message.uri === uri) { clearTimeout(timer); listeners.delete(listener); resolve(); }
+            };
+            listeners.add(listener);
+            connection.sendNotification('clinical-dsl/recheckMonograph', uri).catch(reject);
+        });
+    }
+    return { update, preview, diagnostics, recheck };
 }
 
 test('real language server projects normalized data with canonical plan and reference names', { timeout: 10000 }, async t => {
@@ -220,4 +233,79 @@ show DemoPlan`;
     const invalid = await server.preview(uri, 3);
     assert.equal(invalid.items[0].json, undefined);
     assert.match(invalid.items[0].error, /requires a product name/i);
+});
+
+test('pinned monograph diagnostics follow dose and frequency edits and highlight their exact DSL fields', { timeout: 15000 }, async t => {
+    const requests = [];
+    let available = true;
+    const service = createServer(async (req, res) => {
+        assert.equal(req.url, '/validate-regimen');
+        assert.equal(req.method, 'POST');
+        assert.equal(req.headers['x-aurora-client'], 'vscode');
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const payload = JSON.parse(Buffer.concat(chunks));
+        requests.push(payload);
+        if (!available) { res.writeHead(503).end(); return; }
+        const issues = [];
+        if (payload.dose?.amount === 85) issues.push({ field: 'dose', message: 'Outside the source dose range.' });
+        if (payload.frequency === 'Q6H') issues.push({ field: 'frequency', message: 'The source requires PRN.' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: issues.length ? 'invalid' : 'valid', page: 12, issues }));
+    });
+    await new Promise(resolve => service.listen(0, '127.0.0.1', resolve));
+    t.after(() => { service.closeAllConnections(); return new Promise(resolve => service.close(resolve)); });
+    const release = '2026-10-05', din = '00012345', sha256 = 'b'.repeat(64), rxcui = '900001';
+    const server = await startServer(t, { monographValidation: true, rxnormSearch: {
+        enabled: false, release, url: 'http://127.0.0.1:' + service.address().port
+    } });
+    const uri = 'file:///test/synthetic.clinical';
+    const text = `Patient Demo: age 42, condition Example
+// @monograph Drug ${rxcui} ${release} ${din} ${sha256}
+Medication Drug: rxcui "${rxcui}" product "Fixture" route PO dose 85 mg frequency 6H
+Plan P: prescribe Drug for Demo
+show P`;
+    await server.update(uri, text);
+    const snapshot = await server.preview(uri, 1);
+    assert.match(snapshot.items[0].error, /Outside the source dose range/);
+    const diagnostics = server.diagnostics.get(uri).filter(d => d.code?.startsWith('monograph-'));
+    assert.equal(diagnostics.length, 2);
+    const marked = d => text.split('\n')[d.range.start.line].slice(d.range.start.character, d.range.end.character);
+    assert.deepEqual(diagnostics.map(d => [d.code, d.severity, marked(d)]), [
+        ['monograph-dose', 1, '85 mg'], ['monograph-frequency', 1, '6H']
+    ]);
+    assert.deepEqual(requests[0], { rxcui, release, din, sha256, dose: { amount: 85, unit: 'mg' }, frequency: 'Q6H' });
+    const corrected = text.replace('85 mg', '20 mg').replace('frequency 6H', 'frequency 6H PRN');
+    await server.update(uri, corrected, 2);
+    assert.equal((await server.preview(uri, 2)).items[0].error, undefined);
+    assert.deepEqual(server.diagnostics.get(uri), []);
+    const withoutPin = corrected.replace(/^\/\/ @monograph.*\n/m, '');
+    await server.update(uri, withoutPin, 3);
+    await server.preview(uri, 3);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(server.diagnostics.get(uri).map(d => [d.code, d.severity]), [['monograph-source', 2]]);
+    await server.update(uri, corrected.replace(sha256, 'malformed'), 4);
+    assert.match((await server.preview(uri, 4)).items[0].error, /source reference is malformed/);
+    assert.equal(requests.length, 2);
+    available = false;
+    await server.update(uri, corrected, 5);
+    await server.preview(uri, 5);
+    assert.deepEqual(server.diagnostics.get(uri).map(d => [d.code, d.severity]), [['monograph-source', 2]]);
+    available = true;
+    await server.recheck(uri); // The save retry uses the same document version.
+    await server.preview(uri, 5);
+    assert.equal(requests.length, 4);
+    assert.deepEqual(server.diagnostics.get(uri), []);
+});
+
+test('a plan uses the monograph diagnostics for a referenced Medication in another file', async t => {
+    const server = await startServer(t);
+    const medicationUri = 'file:///test/pinned-drug.clinical';
+    const planUri = 'file:///test/plan.clinical';
+    const med = 'Medication Drug: rxcui "900001" product "Fixture" route PO dose 10 mg frequency BID';
+    await server.update(medicationUri, '// @monograph malformed\n' + med);
+    await server.update(planUri, 'Patient Demo: age 42, condition Example\nPlan P: prescribe Drug for Demo\nshow P');
+    assert.match((await server.preview(planUri, 1)).items[0].error, /source reference is malformed/);
+    await server.update(medicationUri, med, 2);
+    assert.equal((await server.preview(planUri, 1)).items[0].error, undefined);
 });

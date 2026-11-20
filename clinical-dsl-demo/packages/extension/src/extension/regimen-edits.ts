@@ -1,5 +1,5 @@
 import { AstUtils, CstUtils, GrammarUtils } from 'langium';
-import { formatFrequency, normalizeFrequency, type Model, type Route } from 'clinical-dsl-language';
+import { formatFrequency, normalizeFrequency, monographSourceEdits, readMonographSource, type Model, type MonographSource, type Route } from 'clinical-dsl-language';
 import { parseClinicalDocumentResult } from './context-help.js';
 
 interface Binding {
@@ -25,8 +25,22 @@ function medicationAt(model: Model, positionOrAlias: number | string, release: s
 
 export function bindingAt(text: string, positionOrAlias: number | string, release: string) {
     const medication = medicationAt(parseClinicalDocumentResult(text).value, positionOrAlias, release);
-    if (medication?.rxcui) return { alias: medication.name, rxcui: medication.rxcui, display: medication.productName };
+    if (medication?.rxcui) return { alias: medication.name, rxcui: medication.rxcui, display: medication.productName,
+        selection: readMonographSource(medication) };
     return undefined;
+}
+
+export function confirmedSourceEdits(text: string, binding: Binding, reference: MonographSource, previous?: ReturnType<typeof readMonographSource>) {
+    const medication = medicationAt(parseClinicalDocumentResult(text).value, binding.alias, binding.release);
+    if (!medication || medication.rxcui !== binding.rxcui || medication.productName !== binding.display) return undefined;
+    if (previous) {
+        const current = readMonographSource(medication);
+        if (current.status !== previous.status || previous.status === 'invalid') return undefined;
+        if (current.status === 'selected' && previous.status === 'selected' &&
+            (current.source.sha256 !== previous.source.sha256 || current.source.din !== previous.source.din ||
+                current.source.release !== previous.source.release)) return undefined;
+    }
+    return monographSourceEdits(medication, reference);
 }
 
 function parseDose(value: string) {

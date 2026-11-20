@@ -6,3 +6,5 @@ export * from './generated/grammar.js';
 export * from './generated/module.js';
 export { searchOptions } from './rxnorm-product-search.js';
 export { formatFrequency, normalizeFrequency } from './frequency.js';
+export { readMonographSource, monographSourceEdits, type MonographSource } from './monograph-source.js';
+export { monographIssueRange } from './monograph-validation.js';
